@@ -1,0 +1,35 @@
+# UAIS Database Connections Configuration
+# Copy this file to db_connections.yaml and update with your actual paths/credentials
+
+databases:
+  # App database (source of truth for athletes and athlete_uuid)
+  app:
+    sqlite: "path/to/app_database.db"
+    # OR use Postgres:
+    # postgres:
+    #   host: "localhost"
+    #   port: 5432
+    #   database: "uais_app"
+    #   user: "your_user"
+    #   password: "your_password"
+  
+  # Warehouse database (centralized fact tables)
+  warehouse:
+    sqlite: "path/to/warehouse_database.db"
+    # OR use Postgres:
+    # postgres:
+    #   host: "localhost"
+    #   port: 5432
+    #   database: "uais_warehouse"
+    #   user: "your_user"
+    #   password: "your_password"
+
+# Raw data directory paths by domain
+raw_data_paths:
+  athletic_screen: "D:/Athletic Screen 2.0/Output Files/"
+  mobility: "path/to/mobility/raw/data/"
+  pro_sup: "D:/Pro-Sup Test/Data/"
+  proteus: "path/to/proteus/raw/data/"
+  hitting: "path/to/hitting/raw/data/"
+  pitching: "path/to/pitching/raw/data/"
+
