@@ -1,0 +1,30 @@
+{
+  "name": "uais",
+  "version": "1.0.0",
+  "description": "UAIS Database Schema Management with Prisma",
+  "scripts": {
+    "prisma:generate": "prisma generate",
+    "prisma:studio": "prisma studio",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:migrate:reset": "prisma migrate reset",
+    "prisma:format": "prisma format",
+    "prisma:validate": "prisma validate",
+    "prisma:warehouse:generate": "prisma generate --schema=prisma/warehouse/schema.prisma",
+    "prisma:warehouse:studio": "prisma studio --schema=prisma/warehouse/schema.prisma",
+    "prisma:warehouse:migrate": "prisma migrate dev --schema=prisma/warehouse/schema.prisma",
+    "prisma:warehouse:migrate:deploy": "prisma migrate deploy --schema=prisma/warehouse/schema.prisma",
+    "prisma:warehouse:db:pull": "prisma db pull --schema=prisma/warehouse/schema.prisma",
+    "prisma:app:generate": "prisma generate --schema=prisma/app/schema.prisma",
+    "prisma:app:studio": "prisma studio --schema=prisma/app/schema.prisma",
+    "prisma:app:migrate": "prisma migrate dev --schema=prisma/app/schema.prisma",
+    "prisma:app:migrate:deploy": "prisma migrate deploy --schema=prisma/app/schema.prisma",
+    "prisma:app:db:pull": "prisma db pull --schema=prisma/app/schema.prisma"
+  },
+  "devDependencies": {
+    "@prisma/client": "^5.19.0",
+    "prisma": "^5.19.0"
+  },
+  "dependencies": {}
+}
+

@@ -1,0 +1,47 @@
+# UAIS Database Connections Configuration
+# Update the paths below with your actual database locations
+
+databases:
+  # App database (source of truth for athletes and athlete_uuid)
+  app:
+    # sqlite: "path/to/app_database.db"
+    # OR use Postgres (uncomment and configure):
+    postgres:
+      host: "localhost"
+      port: 5432
+      database: "local"
+      user: "postgres"
+      password: "Byoung15!"
+  
+  # Warehouse database (centralized fact tables)
+  warehouse:
+    # sqlite: "path/to/warehouse_database.db"
+    # OR use Postgres (uncomment and configure):
+    postgres:
+      host: "localhost"
+      port: 5432  # PostgreSQL default port (was 5433, but server is on 5432)
+      database: "uais_warehouse"
+      user: "postgres"
+      password: "Byoung15!"
+
+# Source databases (scattered legacy databases to consolidate)
+# These are the existing databases you want to merge into the warehouse
+source_databases:
+  athletic_screen: "D:/Athletic Screen 2.0/Output Files/movement_database_v2.db"
+  pro_sup: "D:/Pro-Sup Test/pro-sup_data.sqlite"
+  # Add more source databases as needed:
+  # mobility: "path/to/mobility_database.db"
+  # proteus: "path/to/proteus_database.db"
+  # hitting: "path/to/hitting_database.db"
+  # pitching: "path/to/pitching_database.db"
+
+# Raw data directory paths by domain
+# Update these paths to point to your actual raw data directories
+raw_data_paths:
+  athletic_screen: "D:/Athletic Screen 2.0/Output Files/"
+  mobility: "path/to/mobility/raw/data/"
+  pro_sup: "D:/Pro-Sup Test/Data/"
+  proteus: "path/to/proteus/raw/data/"
+  hitting: "path/to/hitting/raw/data/"
+  pitching: "path/to/pitching/raw/data/"
+  readiness_screen: "path/to/readiness_screen/raw/data/"

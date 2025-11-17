@@ -1,86 +1,40 @@
+# Prisma
+prisma/generated/
+node_modules/
+.env
+*.log
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
 venv/
 env/
 ENV/
-.venv
-
-# IDEs
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# Jupyter Notebooks
-.ipynb_checkpoints
-*.ipynb
-
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-*.db-shm
-*.db-wal
-
-# Logs
-*.log
-logs/
-etl_run_*.log
-
-# Configuration (keep example, ignore actual)
-config/db_connections.yaml
-!config/db_connections.example.yaml
+*.egg-info/
+dist/
+build/
 
 # R
 .Rhistory
 .RData
 .Ruserdata
-renv/library/
-renv/python/
+renv/
 
-# Temporary files
-*.tmp
-*.temp
-*.bak
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
 *~
 
 # OS
-Thumbs.db
 .DS_Store
+Thumbs.db
 
-# Project specific
-*.pdf
-*.docx
-*.png
-*.jpg
-*.jpeg
-!docs/**/*.png
-!docs/**/*.jpg
-
-# Data directories (if you want to exclude raw data)
-# Uncomment if you don't want to track raw data files
-# data/
-# raw_data/
-
+# Database files
+*.db
+*.sqlite
+*.sqlite3

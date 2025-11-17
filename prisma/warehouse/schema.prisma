@@ -1,0 +1,688 @@
+// Warehouse Database Schema
+// This is the centralized data warehouse for UAIS
+// Contains fact tables (f_*) and dimension tables (d_*)
+
+generator client {
+  provider        = "prisma-client-js"
+  output          = "../generated/warehouse"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("WAREHOUSE_DATABASE_URL")
+  schemas  = ["public", "analytics"]
+}
+
+// ============================================================================
+// DIMENSION TABLES
+// ============================================================================
+
+model DAthletes {
+  id                String   @id @default(uuid()) @map("athlete_uuid") @db.VarChar(36)
+  name              String   @db.Text
+  normalizedName    String   @unique @map("normalized_name") @db.Text
+  dateOfBirth       DateTime? @map("date_of_birth") @db.Date
+  age               Decimal? @db.Decimal
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  gender            String?  @db.Text
+  height            Decimal? @db.Decimal
+  weight            Decimal? @db.Decimal
+  email             String?  @db.Text
+  phone             String?  @db.Text
+  notes             String?  @db.Text
+  
+  // Metadata
+  sourceSystem      String?  @map("source_system") @db.Text
+  sourceAthleteId   String?  @map("source_athlete_id") @db.Text
+  appDbUuid         String?  @map("app_db_uuid") @db.Text
+  appDbSyncedAt     DateTime? @map("app_db_synced_at") @db.Timestamptz
+  
+  // Data Presence Flags (boolean - has data in this table?)
+  hasPitchingData       Boolean @default(false) @map("has_pitching_data")
+  hasAthleticScreenData Boolean @default(false) @map("has_athletic_screen_data")
+  hasProSupData         Boolean @default(false) @map("has_pro_sup_data")
+  hasReadinessScreenData Boolean @default(false) @map("has_readiness_screen_data")
+  hasMobilityData       Boolean @default(false) @map("has_mobility_data")
+  hasProteusData        Boolean @default(false) @map("has_proteus_data")
+  hasHittingData        Boolean @default(false) @map("has_hitting_data")
+  
+  // Session Counts (number of distinct sessions/dates in each table)
+  pitchingSessionCount       Int @default(0) @map("pitching_session_count")
+  athleticScreenSessionCount Int @default(0) @map("athletic_screen_session_count")
+  proSupSessionCount         Int @default(0) @map("pro_sup_session_count")
+  readinessScreenSessionCount Int @default(0) @map("readiness_screen_session_count")
+  mobilitySessionCount       Int @default(0) @map("mobility_session_count")
+  proteusSessionCount        Int @default(0) @map("proteus_session_count")
+  hittingSessionCount        Int @default(0) @map("hitting_session_count")
+  
+  // Timestamps
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  
+  // Relations
+  athleticScreen    FAthleticScreen[]
+  athleticScreenCMJ FAthleticScreenCMJ[]
+  athleticScreenDJ  FAthleticScreenDJ[]
+  athleticScreenSLV FAthleticScreenSLV[]
+  athleticScreenNMT FAthleticScreenNMT[]
+  athleticScreenPPU FAthleticScreenPPU[]
+  proSup            FProSup[]
+  readinessScreen   FReadinessScreen[]
+  readinessScreenI  FReadinessScreenI[]
+  readinessScreenY  FReadinessScreenY[]
+  readinessScreenT  FReadinessScreenT[]
+  readinessScreenIR90 FReadinessScreenIR90[]
+  readinessScreenCMJ FReadinessScreenCMJ[]
+  readinessScreenPPU FReadinessScreenPPU[]
+  mobility          FMobility[]
+  proteus           FProteus[]
+  pitching          FKinematicsPitching[]
+  hitting           FKinematicsHitting[]
+
+  @@schema("analytics")
+  @@map("d_athletes")
+  @@index([normalizedName], map: "idx_d_athletes_normalized_name")
+  @@index([appDbUuid], map: "idx_d_athletes_app_db_uuid")
+  @@index([sourceSystem, sourceAthleteId], map: "idx_d_athletes_source_system")
+}
+
+// ============================================================================
+// FACT TABLES
+// ============================================================================
+
+model FAthleticScreen {
+  id              Int      @id @default(autoincrement())
+  athleteUuid     String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate     DateTime @map("session_date") @db.Date
+  sourceSystem    String   @map("source_system") @db.VarChar(50)
+  sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // Relation
+  athlete         DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_athletic_screen")
+  @@index([athleteUuid], map: "idx_f_athletic_screen_uuid")
+  @@index([sessionDate], map: "idx_f_athletic_screen_date")
+}
+
+// ============================================================================
+// ATHLETIC SCREEN MOVEMENT TABLES
+// ============================================================================
+
+model FAthleticScreenCMJ {
+  id                Int      @id @default(autoincrement())
+  athleteUuid       String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime @map("session_date") @db.Date
+  sourceSystem      String   @default("athletic_screen") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
+  trialName         String?  @map("trial_name") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // CMJ Metrics
+  jhIn              Decimal? @map("jh_in") @db.Decimal
+  peakPower         Decimal? @map("peak_power") @db.Decimal
+  ppForceplate      Decimal? @map("pp_forceplate") @db.Decimal
+  forceAtPp         Decimal? @map("force_at_pp") @db.Decimal
+  velAtPp           Decimal? @map("vel_at_pp") @db.Decimal
+  ppWPerKg          Decimal? @map("pp_w_per_kg") @db.Decimal
+  peakPowerW        Decimal? @map("peak_power_w") @db.Decimal
+  timeToPeakS       Decimal? @map("time_to_peak_s") @db.Decimal
+  rpdMaxWPerS       Decimal? @map("rpd_max_w_per_s") @db.Decimal
+  timeToRpdMaxS     Decimal? @map("time_to_rpd_max_s") @db.Decimal
+  riseTime10_90S    Decimal? @map("rise_time_10_90_s") @db.Decimal
+  fwhmS             Decimal? @map("fwhm_s") @db.Decimal
+  aucJ              Decimal? @map("auc_j") @db.Decimal
+  workEarlyPct      Decimal? @map("work_early_pct") @db.Decimal
+  decay90_10S       Decimal? @map("decay_90_10_s") @db.Decimal
+  tComNorm0to1      Decimal? @map("t_com_norm_0to1") @db.Decimal
+  skewness          Decimal? @db.Decimal
+  kurtosis          Decimal? @db.Decimal
+  spectralCentroidHz Decimal? @map("spectral_centroid_hz") @db.Decimal
+  demographic       String?  @db.Text
+  
+  // Relation
+  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_athletic_screen_cmj")
+  @@index([athleteUuid], map: "idx_f_athletic_screen_cmj_uuid")
+  @@index([sessionDate], map: "idx_f_athletic_screen_cmj_date")
+}
+
+model FAthleticScreenDJ {
+  id                Int      @id @default(autoincrement())
+  athleteUuid       String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime @map("session_date") @db.Date
+  sourceSystem      String   @default("athletic_screen") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
+  trialName         String?  @map("trial_name") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // DJ Metrics
+  jhIn              Decimal? @map("jh_in") @db.Decimal
+  peakPower         Decimal? @map("peak_power") @db.Decimal
+  ppForceplate      Decimal? @map("pp_forceplate") @db.Decimal
+  forceAtPp         Decimal? @map("force_at_pp") @db.Decimal
+  velAtPp           Decimal? @map("vel_at_pp") @db.Decimal
+  ppWPerKg          Decimal? @map("pp_w_per_kg") @db.Decimal
+  ct                Decimal? @db.Decimal
+  rsi               Decimal? @db.Decimal
+  peakPowerW        Decimal? @map("peak_power_w") @db.Decimal
+  timeToPeakS       Decimal? @map("time_to_peak_s") @db.Decimal
+  rpdMaxWPerS        Decimal? @map("rpd_max_w_per_s") @db.Decimal
+  timeToRpdMaxS     Decimal? @map("time_to_rpd_max_s") @db.Decimal
+  riseTime10_90S    Decimal? @map("rise_time_10_90_s") @db.Decimal
+  fwhmS             Decimal? @map("fwhm_s") @db.Decimal
+  aucJ              Decimal? @map("auc_j") @db.Decimal
+  workEarlyPct      Decimal? @map("work_early_pct") @db.Decimal
+  decay90_10S       Decimal? @map("decay_90_10_s") @db.Decimal
+  tComNorm0to1      Decimal? @map("t_com_norm_0to1") @db.Decimal
+  skewness          Decimal? @db.Decimal
+  kurtosis          Decimal? @db.Decimal
+  spectralCentroidHz Decimal? @map("spectral_centroid_hz") @db.Decimal
+  demographic       String?  @db.Text
+  
+  // Relation
+  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_athletic_screen_dj")
+  @@index([athleteUuid], map: "idx_f_athletic_screen_dj_uuid")
+  @@index([sessionDate], map: "idx_f_athletic_screen_dj_date")
+}
+
+model FAthleticScreenSLV {
+  id                Int      @id @default(autoincrement())
+  athleteUuid       String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime @map("session_date") @db.Date
+  sourceSystem      String   @default("athletic_screen") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
+  trialName         String?  @map("trial_name") @db.Text
+  side              String?  @db.Text
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // SLV Metrics
+  jhIn              Decimal? @map("jh_in") @db.Decimal
+  ppForceplate      Decimal? @map("pp_forceplate") @db.Decimal
+  forceAtPp         Decimal? @map("force_at_pp") @db.Decimal
+  velAtPp           Decimal? @map("vel_at_pp") @db.Decimal
+  ppWPerKg          Decimal? @map("pp_w_per_kg") @db.Decimal
+  peakPowerW        Decimal? @map("peak_power_w") @db.Decimal
+  timeToPeakS       Decimal? @map("time_to_peak_s") @db.Decimal
+  rpdMaxWPerS       Decimal? @map("rpd_max_w_per_s") @db.Decimal
+  timeToRpdMaxS     Decimal? @map("time_to_rpd_max_s") @db.Decimal
+  riseTime10_90S    Decimal? @map("rise_time_10_90_s") @db.Decimal
+  fwhmS             Decimal? @map("fwhm_s") @db.Decimal
+  aucJ              Decimal? @map("auc_j") @db.Decimal
+  workEarlyPct      Decimal? @map("work_early_pct") @db.Decimal
+  decay90_10S       Decimal? @map("decay_90_10_s") @db.Decimal
+  tComNorm0to1      Decimal? @map("t_com_norm_0to1") @db.Decimal
+  skewness          Decimal? @db.Decimal
+  kurtosis          Decimal? @db.Decimal
+  spectralCentroidHz Decimal? @map("spectral_centroid_hz") @db.Decimal
+  demographic       String?  @db.Text
+  
+  // Relation
+  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_athletic_screen_slv")
+  @@index([athleteUuid], map: "idx_f_athletic_screen_slv_uuid")
+  @@index([sessionDate], map: "idx_f_athletic_screen_slv_date")
+}
+
+model FAthleticScreenNMT {
+  id                Int      @id @default(autoincrement())
+  athleteUuid       String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime @map("session_date") @db.Date
+  sourceSystem      String   @default("athletic_screen") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
+  trialName         String?  @map("trial_name") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // NMT Metrics
+  numTaps10s        Decimal? @map("num_taps_10s") @db.Decimal
+  numTaps20s        Decimal? @map("num_taps_20s") @db.Decimal
+  numTaps30s        Decimal? @map("num_taps_30s") @db.Decimal
+  numTaps           Decimal? @map("num_taps") @db.Decimal
+  demographic       String?  @db.Text
+  
+  // Relation
+  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_athletic_screen_nmt")
+  @@index([athleteUuid], map: "idx_f_athletic_screen_nmt_uuid")
+  @@index([sessionDate], map: "idx_f_athletic_screen_nmt_date")
+}
+
+model FAthleticScreenPPU {
+  id                Int      @id @default(autoincrement())
+  athleteUuid       String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime @map("session_date") @db.Date
+  sourceSystem      String   @default("athletic_screen") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
+  trialName         String?  @map("trial_name") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // PPU Metrics
+  jhIn              Decimal? @map("jh_in") @db.Decimal
+  peakPower         Decimal? @map("peak_power") @db.Decimal
+  ppForceplate      Decimal? @map("pp_forceplate") @db.Decimal
+  forceAtPp         Decimal? @map("force_at_pp") @db.Decimal
+  velAtPp           Decimal? @map("vel_at_pp") @db.Decimal
+  ppWPerKg          Decimal? @map("pp_w_per_kg") @db.Decimal
+  peakPowerW        Decimal? @map("peak_power_w") @db.Decimal
+  timeToPeakS       Decimal? @map("time_to_peak_s") @db.Decimal
+  rpdMaxWPerS       Decimal? @map("rpd_max_w_per_s") @db.Decimal
+  timeToRpdMaxS     Decimal? @map("time_to_rpd_max_s") @db.Decimal
+  riseTime10_90S    Decimal? @map("rise_time_10_90_s") @db.Decimal
+  fwhmS             Decimal? @map("fwhm_s") @db.Decimal
+  aucJ              Decimal? @map("auc_j") @db.Decimal
+  workEarlyPct      Decimal? @map("work_early_pct") @db.Decimal
+  decay90_10S       Decimal? @map("decay_90_10_s") @db.Decimal
+  tComNorm0to1      Decimal? @map("t_com_norm_0to1") @db.Decimal
+  skewness          Decimal? @db.Decimal
+  kurtosis          Decimal? @db.Decimal
+  spectralCentroidHz Decimal? @map("spectral_centroid_hz") @db.Decimal
+  demographic       String?  @db.Text
+  
+  // Relation
+  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_athletic_screen_ppu")
+  @@index([athleteUuid], map: "idx_f_athletic_screen_ppu_uuid")
+  @@index([sessionDate], map: "idx_f_athletic_screen_ppu_date")
+}
+
+model FProSup {
+  id              Int      @id @default(autoincrement())
+  athleteUuid     String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate     DateTime @map("session_date") @db.Date
+  sourceSystem    String   @map("source_system") @db.VarChar(50)
+  sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // Pro-Sup specific fields
+  age             Decimal? @db.Decimal
+  height          Decimal? @db.Decimal
+  weight          Decimal? @db.Decimal
+  injuryHistory   String?  @map("injury_history") @db.Text
+  seasonPhase     String?  @map("season_phase") @db.VarChar(50)
+  dynomometerScore String? @map("dynomometer_score") @db.VarChar(50)
+  comments        String?  @db.Text
+  
+  // Forearm ROM
+  forearmRom0to10   Decimal? @map("forearm_rom_0to10") @db.Decimal
+  forearmRom10to20  Decimal? @map("forearm_rom_10to20") @db.Decimal
+  forearmRom20to30  Decimal? @map("forearm_rom_20to30") @db.Decimal
+  forearmRom         Decimal? @map("forearm_rom") @db.Decimal
+  
+  // Total ROM
+  totRom0to10        Decimal? @map("tot_rom_0to10") @db.Decimal
+  totRom10to20       Decimal? @map("tot_rom_10to20") @db.Decimal
+  totRom20to30       Decimal? @map("tot_rom_20to30") @db.Decimal
+  totRom              Decimal? @map("tot_rom") @db.Decimal
+  
+  // Number of flips
+  numOfFlips0_10     Decimal? @map("num_of_flips_0_10") @db.Decimal
+  numOfFlips10_20    Decimal? @map("num_of_flips_10_20") @db.Decimal
+  numOfFlips20_30    Decimal? @map("num_of_flips_20_30") @db.Decimal
+  numOfFlips          Decimal? @map("num_of_flips") @db.Decimal
+  
+  // Average velocity
+  avgVelo0_10        Decimal? @map("avg_velo_0_10") @db.Decimal
+  avgVelo10_20       Decimal? @map("avg_velo_10_20") @db.Decimal
+  avgVelo20_30       Decimal? @map("avg_velo_20_30") @db.Decimal
+  avgVelo             Decimal? @map("avg_velo") @db.Decimal
+  
+  // Fatigue indices
+  fatigueIndex10     Decimal? @map("fatigue_index_10") @db.Decimal
+  fatigueIndex20     Decimal? @map("fatigue_index_20") @db.Decimal
+  fatigueIndex30     Decimal? @map("fatigue_index_30") @db.Decimal
+  totalFatigueScore  Decimal? @map("total_fatigue_score") @db.Decimal
+  
+  // Scores
+  consistencyPenalty Decimal? @map("consistency_penalty") @db.Decimal
+  totalScore          Decimal? @map("total_score") @db.Decimal
+  cumulativeRom       Decimal? @map("cumulative_rom") @db.Decimal
+  rawTotalScore       Decimal? @map("raw_total_score") @db.Decimal
+  
+  // Relation
+  athlete         DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_pro_sup")
+  @@index([athleteUuid], map: "idx_f_pro_sup_uuid")
+  @@index([sessionDate], map: "idx_f_pro_sup_date")
+}
+
+model FReadinessScreen {
+  id              Int      @id @default(autoincrement())
+  athleteUuid     String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate     DateTime @map("session_date") @db.Date
+  sourceSystem    String   @map("source_system") @db.VarChar(50)
+  sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // Relation
+  athlete         DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_readiness_screen")
+  @@index([athleteUuid], map: "idx_f_readiness_uuid")
+  @@index([sessionDate], map: "idx_f_readiness_date")
+}
+
+// ============================================================================
+// READINESS SCREEN MOVEMENT TABLES
+// ============================================================================
+
+model FReadinessScreenI {
+  id                Int      @id @default(autoincrement())
+  athleteUuid       String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime @map("session_date") @db.Date
+  sourceSystem      String   @default("readiness_screen") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
+  trialId           Int?     @map("trial_id")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // I Test Metrics (Isometric I)
+  avgForce          Decimal? @map("avg_force") @db.Decimal
+  avgForceNorm      Decimal? @map("avg_force_norm") @db.Decimal
+  maxForce          Decimal? @map("max_force") @db.Decimal
+  maxForceNorm      Decimal? @map("max_force_norm") @db.Decimal
+  timeToMax         Decimal? @map("time_to_max") @db.Decimal
+  
+  // Relation
+  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_readiness_screen_i")
+  @@index([athleteUuid], map: "idx_f_readiness_screen_i_uuid")
+  @@index([sessionDate], map: "idx_f_readiness_screen_i_date")
+}
+
+model FReadinessScreenY {
+  id                Int      @id @default(autoincrement())
+  athleteUuid       String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime @map("session_date") @db.Date
+  sourceSystem      String   @default("readiness_screen") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
+  trialId           Int?     @map("trial_id")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // Y Test Metrics (Isometric Y)
+  avgForce          Decimal? @map("avg_force") @db.Decimal
+  avgForceNorm      Decimal? @map("avg_force_norm") @db.Decimal
+  maxForce          Decimal? @map("max_force") @db.Decimal
+  maxForceNorm      Decimal? @map("max_force_norm") @db.Decimal
+  timeToMax         Decimal? @map("time_to_max") @db.Decimal
+  
+  // Relation
+  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_readiness_screen_y")
+  @@index([athleteUuid], map: "idx_f_readiness_screen_y_uuid")
+  @@index([sessionDate], map: "idx_f_readiness_screen_y_date")
+}
+
+model FReadinessScreenT {
+  id                Int      @id @default(autoincrement())
+  athleteUuid       String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime @map("session_date") @db.Date
+  sourceSystem      String   @default("readiness_screen") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
+  trialId           Int?     @map("trial_id")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // T Test Metrics (Isometric T)
+  avgForce          Decimal? @map("avg_force") @db.Decimal
+  avgForceNorm      Decimal? @map("avg_force_norm") @db.Decimal
+  maxForce          Decimal? @map("max_force") @db.Decimal
+  maxForceNorm      Decimal? @map("max_force_norm") @db.Decimal
+  timeToMax         Decimal? @map("time_to_max") @db.Decimal
+  
+  // Relation
+  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_readiness_screen_t")
+  @@index([athleteUuid], map: "idx_f_readiness_screen_t_uuid")
+  @@index([sessionDate], map: "idx_f_readiness_screen_t_date")
+}
+
+model FReadinessScreenIR90 {
+  id                Int      @id @default(autoincrement())
+  athleteUuid       String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime @map("session_date") @db.Date
+  sourceSystem      String   @default("readiness_screen") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
+  trialId           Int?     @map("trial_id")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // IR90 Test Metrics (Isometric IR90)
+  avgForce          Decimal? @map("avg_force") @db.Decimal
+  avgForceNorm      Decimal? @map("avg_force_norm") @db.Decimal
+  maxForce          Decimal? @map("max_force") @db.Decimal
+  maxForceNorm      Decimal? @map("max_force_norm") @db.Decimal
+  timeToMax         Decimal? @map("time_to_max") @db.Decimal
+  
+  // Relation
+  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_readiness_screen_ir90")
+  @@index([athleteUuid], map: "idx_f_readiness_screen_ir90_uuid")
+  @@index([sessionDate], map: "idx_f_readiness_screen_ir90_date")
+}
+
+model FReadinessScreenCMJ {
+  id                Int      @id @default(autoincrement())
+  athleteUuid       String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime @map("session_date") @db.Date
+  sourceSystem      String   @default("readiness_screen") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
+  trialId           Int?     @map("trial_id")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // CMJ Metrics
+  jumpHeight        Decimal? @map("jump_height") @db.Decimal
+  peakPower         Decimal? @map("peak_power") @db.Decimal
+  peakForce         Decimal? @map("peak_force") @db.Decimal
+  ppWPerKg          Decimal? @map("pp_w_per_kg") @db.Decimal
+  ppForceplate      Decimal? @map("pp_forceplate") @db.Decimal
+  forceAtPp         Decimal? @map("force_at_pp") @db.Decimal
+  velAtPp           Decimal? @map("vel_at_pp") @db.Decimal
+  
+  // Relation
+  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_readiness_screen_cmj")
+  @@index([athleteUuid], map: "idx_f_readiness_screen_cmj_uuid")
+  @@index([sessionDate], map: "idx_f_readiness_screen_cmj_date")
+}
+
+model FReadinessScreenPPU {
+  id                Int      @id @default(autoincrement())
+  athleteUuid       String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime @map("session_date") @db.Date
+  sourceSystem      String   @default("readiness_screen") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
+  trialId           Int?     @map("trial_id")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // PPU Metrics (Push-up)
+  jumpHeight        Decimal? @map("jump_height") @db.Decimal
+  peakPower         Decimal? @map("peak_power") @db.Decimal
+  peakForce         Decimal? @map("peak_force") @db.Decimal
+  ppWPerKg          Decimal? @map("pp_w_per_kg") @db.Decimal
+  ppForceplate      Decimal? @map("pp_forceplate") @db.Decimal
+  forceAtPp         Decimal? @map("force_at_pp") @db.Decimal
+  velAtPp           Decimal? @map("vel_at_pp") @db.Decimal
+  
+  // Relation
+  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_readiness_screen_ppu")
+  @@index([athleteUuid], map: "idx_f_readiness_screen_ppu_uuid")
+  @@index([sessionDate], map: "idx_f_readiness_screen_ppu_date")
+}
+
+model FMobility {
+  id              Int      @id @default(autoincrement())
+  athleteUuid     String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate     DateTime @map("session_date") @db.Date
+  sourceSystem    String   @default("mobility") @map("source_system") @db.VarChar(50)
+  sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // Assessment Date (from column A, rows 10-54)
+  assessmentDate  DateTime? @map("assessment_date") @db.Date
+  
+  // Relation
+  athlete         DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_mobility")
+  @@index([athleteUuid], map: "idx_f_mobility_uuid")
+  @@index([sessionDate], map: "idx_f_mobility_date")
+  @@index([assessmentDate], map: "idx_f_mobility_assessment_date")
+}
+
+model FProteus {
+  id              Int      @id @default(autoincrement())
+  athleteUuid     String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate     DateTime @map("session_date") @db.Date
+  sourceSystem    String   @default("proteus") @map("source_system") @db.VarChar(50)
+  sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // Session Information
+  sessionId       Int?     @map("session_id")
+  sessionCreatedAt String? @map("session_created_at") @db.Text
+  sessionName     String?  @map("session_name") @db.Text
+  
+  // Exercise Information
+  exerciseId     Int?     @map("exercise_id")
+  exerciseCreatedAt String? @map("exercise_created_at") @db.Text
+  exerciseName   String?  @map("exercise_name") @db.Text
+  
+  // Set Information
+  reps           Int?
+  resistance     Int?
+  setNumber      Int?     @map("set_number")
+  dominance      String?  @db.Text
+  personalRecord Boolean? @map("personal_record")
+  
+  // Power Metrics
+  powerLow       Decimal? @map("power_low") @db.Decimal
+  powerHigh      Decimal? @map("power_high") @db.Decimal
+  powerMean      Decimal? @map("power_mean") @db.Decimal
+  
+  // Acceleration Metrics
+  accelerationLow  Decimal? @map("acceleration_low") @db.Decimal
+  accelerationHigh Decimal? @map("acceleration_high") @db.Decimal
+  accelerationMean Decimal? @map("acceleration_mean") @db.Decimal
+  
+  // Braking Metrics
+  brakingLow     Decimal? @map("braking_low") @db.Decimal
+  brakingHigh    Decimal? @map("braking_high") @db.Decimal
+  brakingMean    Decimal? @map("braking_mean") @db.Decimal
+  
+  // Deceleration Metrics
+  decelerationLow  Decimal? @map("deceleration_low") @db.Decimal
+  decelerationHigh Decimal? @map("deceleration_high") @db.Decimal
+  decelerationMean Decimal? @map("deceleration_mean") @db.Decimal
+  
+  // Explosiveness Metrics
+  explosivenessLow  Decimal? @map("explosiveness_low") @db.Decimal
+  explosivenessHigh Decimal? @map("explosiveness_high") @db.Decimal
+  explosivenessMean Decimal? @map("explosiveness_mean") @db.Decimal
+  
+  // Consistency Metrics
+  consistencyLow  Decimal? @map("consistency_low") @db.Decimal
+  consistencyHigh Decimal? @map("consistency_high") @db.Decimal
+  consistencyMean Decimal? @map("consistency_mean") @db.Decimal
+  
+  // Range of Motion Metrics
+  rangeOfMotionLow  Decimal? @map("range_of_motion_low") @db.Decimal
+  rangeOfMotionHigh Decimal? @map("range_of_motion_high") @db.Decimal
+  rangeOfMotionMean Decimal? @map("range_of_motion_mean") @db.Decimal
+  
+  // Velocity Metrics
+  velocityLow   Decimal? @map("velocity_low") @db.Decimal
+  velocityHigh  Decimal? @map("velocity_high") @db.Decimal
+  velocityMean  Decimal? @map("velocity_mean") @db.Decimal
+  
+  // Movement Information
+  movement           String? @db.Text
+  proteusAttachment String? @map("proteus_attachment") @db.Text
+  
+  // User Information (from source system)
+  userId       Int?    @map("user_id")
+  userName     String? @map("user_name") @db.Text
+  birthDate    String? @map("birth_date") @db.Text
+  weight       Int?
+  height       Int?
+  sex          String? @db.Text
+  sport        String? @db.Text
+  position     String? @db.Text
+  
+  // Relation
+  athlete         DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_proteus")
+  @@index([athleteUuid], map: "idx_f_proteus_uuid")
+  @@index([sessionDate], map: "idx_f_proteus_date")
+  @@index([sessionId], map: "idx_f_proteus_session_id")
+  @@index([exerciseId], map: "idx_f_proteus_exercise_id")
+}
+
+model FKinematicsPitching {
+  id              Int      @id @default(autoincrement())
+  athleteUuid     String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate     DateTime @map("session_date") @db.Date
+  sourceSystem    String   @map("source_system") @db.VarChar(50)
+  sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  metricName      String   @map("metric_name") @db.Text
+  frame           Int
+  value           Decimal? @db.Decimal
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // Relation
+  athlete         DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_kinematics_pitching")
+  @@index([athleteUuid], map: "idx_f_pitching_uuid")
+  @@index([sessionDate], map: "idx_f_pitching_date")
+  @@index([metricName], map: "idx_f_pitching_metric")
+  @@unique([athleteUuid, sessionDate, metricName, frame], map: "idx_f_pitching_unique")
+}
+
+model FKinematicsHitting {
+  id              Int      @id @default(autoincrement())
+  athleteUuid     String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate     DateTime @map("session_date") @db.Date
+  sourceSystem    String   @map("source_system") @db.VarChar(50)
+  sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // Relation
+  athlete         DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_kinematics_hitting")
+  @@index([athleteUuid], map: "idx_f_hitting_uuid")
+  @@index([sessionDate], map: "idx_f_hitting_date")
+}
+

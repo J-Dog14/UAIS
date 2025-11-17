@@ -1,0 +1,586 @@
+<v3d>
+	<owner value="Stand.c3d">
+		<type value="TARGET">
+			<folder value="UNITS_MM">
+				<name value="c7">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="468.361938,468.361664,468.369202" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="329.183533,329.176971,329.204559" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1618.737915,1618.755127,1618.744751" />
+				</name>
+				<name value="head_left_front">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="431.055542,430.990784,430.862946" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="458.964325,458.842163,458.806915" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1913.043335,1913.081055,1913.073975" />
+				</name>
+				<name value="head_left_rear">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="425.757843,425.684784,425.673676" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="350.358521,350.317505,350.239044" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1854.828003,1854.816895,1854.822266" />
+				</name>
+				<name value="head_right_front">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="515.156372,515.032227,514.957397" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="462.062317,462.026123,461.993805" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1914.734741,1914.789307,1914.831543" />
+				</name>
+				<name value="head_right_rear">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="510.923279,510.863007,510.813049" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="348.473572,348.444519,348.436401" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1867.576904,1867.619751,1867.642578" />
+				</name>
+				<name value="left_ankle">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="234.203857,234.230499,234.221146" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="452.695648,452.698059,452.688812" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="134.856934,134.870438,134.850342" />
+				</name>
+				<name value="left_bicep">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="238.735077,238.681351,238.757706" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="622.323303,622.313232,622.308044" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1580.783691,1580.778931,1580.755127" />
+				</name>
+				<name value="left_calf">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="352.641052,352.574921,352.603821" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="371.262207,371.193817,371.301208" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="441.605957,441.688599,441.589142" />
+				</name>
+				<name value="left_elbow">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="123.158386,122.569908,122.638954" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="689.881042,690.245728,690.246765" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1504.815430,1504.838013,1504.805420" />
+				</name>
+				<name value="left_hand">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="258.321411,258.384369,258.406647" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="873.294800,873.228394,873.166748" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1905.878906,1905.906738,1905.936035" />
+				</name>
+				<name value="left_heel">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="297.747925,297.753113,297.758301" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="387.052643,387.114838,387.052582" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="112.158989,112.190620,112.174324" />
+				</name>
+				<name value="left_hip">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="317.235382,317.205292,317.217468" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="580.180054,580.211609,580.231995" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1094.181152,1094.189087,1094.164429" />
+				</name>
+				<name value="left_knee">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="271.095917,271.154083,271.079681" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="435.111664,435.123932,435.190765" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="592.748352,592.728333,592.789673" />
+				</name>
+				<name value="left_lower_psis">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="408.594757,408.580536,408.511108" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="335.464935,335.535706,335.594177" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1096.800903,1096.808105,1096.794678" />
+				</name>
+				<name value="Left_Medial_Ankle">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="336.238647,336.242584,336.202240" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="492.306488,492.310608,492.301941" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="127.423286,127.428398,127.417488" />
+				</name>
+				<name value="left_medial_elbow">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="194.816544,194.816467,194.822632" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="728.873413,728.953247,728.917114" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1490.497803,1490.505859,1490.502319" />
+				</name>
+				<name value="Left_Medial_Knee">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="396.303619,396.310364,396.308990" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="465.973541,465.977448,466.013550" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="541.767761,541.792847,541.760376" />
+				</name>
+				<name value="left_psis_kidney">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="420.934326,420.936218,420.913879" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="365.227020,365.231506,365.284607" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1179.745483,1179.750244,1179.743408" />
+				</name>
+				<name value="left_shoulder">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="269.307037,269.296844,269.757599" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="425.850281,425.842834,424.187317" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1640.078369,1640.082764,1639.945679" />
+				</name>
+				<name value="left_thigh">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="258.106323,258.105957,258.126495" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="459.179993,459.165710,459.170685" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="749.752319,749.713928,749.732849" />
+				</name>
+				<name value="left_Toe_2nd3rdmet">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="296.266724,296.284332,296.248718" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="599.530701,599.502869,599.523987" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="76.248833,76.227356,76.232292" />
+				</name>
+				<name value="left_Toe_5met">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="214.478470,214.555267,214.468552" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="568.301086,568.292725,568.333740" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="76.030220,76.019424,76.099632" />
+				</name>
+				<name value="left_tricep_lower">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="178.038010,178.034683,178.032043" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="596.680969,596.722229,596.751038" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1471.494995,1471.538208,1471.503540" />
+				</name>
+				<name value="left_tricep_upper">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="193.661560,193.609467,193.594910" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="504.337128,504.332794,504.341003" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1495.921387,1495.922363,1495.887207" />
+				</name>
+				<name value="left_wrist_radius">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="209.566467,209.412064,209.610794" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="758.045105,758.084595,758.050598" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1777.370605,1777.375244,1777.462891" />
+				</name>
+				<name value="left_wrist_ulna">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="193.778168,193.818405,193.837646" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="823.792480,823.734741,823.772461" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1754.284058,1754.288574,1754.301147" />
+				</name>
+				<name value="lower_lumbar">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="484.557343,484.509583,484.493988" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="342.663452,342.702454,342.747375" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1090.821899,1090.810913,1090.792114" />
+				</name>
+				<name value="Lt_Forearm">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="137.764114,137.775146,137.799911" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="765.533936,765.484619,765.558228" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1656.332520,1656.328979,1656.354736" />
+				</name>
+				<name value="right_ankle">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="685.733215,685.771912,685.726318" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="435.804901,435.809753,435.800018" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="141.355728,141.388214,141.343277" />
+				</name>
+				<name value="right_bicep">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="666.444397,666.436157,666.435120" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="662.652283,662.678223,662.693237" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1600.214233,1600.169556,1600.134888" />
+				</name>
+				<name value="right_calf">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="610.756226,610.681396,610.678528" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="367.939514,368.016724,368.028687" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="394.904846,394.927460,394.750397" />
+				</name>
+				<name value="right_elbow">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="774.598511,774.671814,774.581543" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="772.764160,772.960022,772.781189" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1564.187500,1563.870483,1564.119141" />
+				</name>
+				<name value="right_hand">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="704.052124,704.046204,704.111816" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="783.491638,783.522278,783.570068" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1894.951660,1894.914185,1894.859619" />
+				</name>
+				<name value="right_heel">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="624.239563,624.218567,624.221130" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="371.546204,371.608795,371.555389" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="133.323471,133.224716,133.246964" />
+				</name>
+				<name value="right_hip">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="588.053894,587.969299,587.975891" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="593.158875,593.255798,593.249268" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1108.287598,1108.268433,1108.229126" />
+				</name>
+				<name value="right_knee">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="648.217896,648.197876,648.220093" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="455.671875,455.665985,455.707611" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="611.810059,611.837524,611.840515" />
+				</name>
+				<name value="Right_Medial_Ankle">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="584.397827,584.341064,584.387878" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="451.409332,451.513641,451.417206" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="133.498779,133.558533,133.482315" />
+				</name>
+				<name value="right_medial_elbow">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="706.286499,706.284851,706.261292" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="796.133667,796.122742,796.175171" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1531.882080,1531.838013,1531.792847" />
+				</name>
+				<name value="Right_Medial_Knee">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="516.109558,516.104065,516.090698" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="490.449768,490.453583,490.494324" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="571.706482,571.698242,571.698853" />
+				</name>
+				<name value="right_shoulder">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="667.066101,667.059875,667.059631" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="469.794342,469.836823,469.833160" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1627.594849,1627.580444,1627.585938" />
+				</name>
+				<name value="right_thigh">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="656.936340,656.945190,656.897766" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="473.154327,473.187286,473.196045" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="776.047974,776.024109,775.997742" />
+				</name>
+				<name value="right_toe_2nd3rdmet">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="711.959839,712.004395,711.957275" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="517.656372,517.821472,517.595154" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="84.308609,84.385071,84.176064" />
+				</name>
+				<name value="right_toe_5met">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="630.812927,630.831360,630.816467" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="570.008972,570.013794,570.017151" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="82.227959,82.242310,82.231186" />
+				</name>
+				<name value="right_tricep_lower">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="744.782776,744.736023,744.752808" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="674.556458,674.569275,674.586914" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1500.756470,1500.737793,1500.685791" />
+				</name>
+				<name value="right_tricep_upper">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="733.876892,733.881348,733.859863" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="579.303528,579.319580,579.332825" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1496.187622,1496.150513,1496.120239" />
+				</name>
+				<name value="right_wrist_radius">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="671.520447,671.533081,671.540833" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="729.165161,729.207947,729.257812" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1822.313721,1822.239502,1822.222290" />
+				</name>
+				<name value="right_wrist_ulna">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="702.190796,702.218689,702.224915" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="819.740295,819.813232,819.846985" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1825.792236,1825.748901,1825.696655" />
+				</name>
+				<name value="Rt_Forearm">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="744.382812,744.381165,744.397339" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="798.410339,798.444824,798.473083" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1717.227905,1717.171021,1717.138184" />
+				</name>
+				<name value="T4">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="466.052032,465.943695,466.021515" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="309.968994,309.981659,309.985138" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1472.683105,1472.647095,1472.616333" />
+				</name>
+				<name value="upper_lumbar">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="493.098267,493.055756,492.997406" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="376.357513,376.391205,376.386749" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1182.986328,1182.995117,1183.061401" />
+				</name>
+			</folder>
+		</type>
+		<type value="METRIC">
+			<folder value="PROCESSED">
+				<name value="startTime">
+					<component value="X" frames="1" data="2.233333" />
+				</name>
+				<name value="endTime">
+					<component value="X" frames="1" data="2.240000" />
+				</name>
+				<name value="Uncropped Measurement Length">
+					<component value="X" frames="1" data="2.827000" />
+				</name>
+				<name value="Frame Rate">
+					<component value="X" frames="1" data="300.000000" />
+				</name>
+			</folder>
+			<folder value="SEG_LENGTH">
+				<name value="Pelvis">
+					<component value="X" frames="1" data="271.458405" />
+				</name>
+				<name value="RThigh">
+					<component value="X" frames="1" data="457.204773" />
+				</name>
+				<name value="RLeg">
+					<component value="X" frames="1" data="458.344147" />
+				</name>
+				<name value="RFoot">
+					<component value="X" frames="1" data="149.091721" />
+				</name>
+				<name value="LThigh">
+					<component value="X" frames="1" data="477.842651" />
+				</name>
+				<name value="LLeg">
+					<component value="X" frames="1" data="439.358215" />
+				</name>
+				<name value="LFoot">
+					<component value="X" frames="1" data="173.521988" />
+				</name>
+				<name value="Thorax">
+					<component value="X" frames="1" data="245.711746" />
+				</name>
+				<name value="RArm">
+					<component value="X" frames="1" data="312.181213" />
+				</name>
+				<name value="RForearm">
+					<component value="X" frames="1" data="271.422791" />
+				</name>
+				<name value="RHand">
+					<component value="X" frames="1" data="117.119400" />
+				</name>
+				<name value="LArm">
+					<component value="X" frames="1" data="296.952301" />
+				</name>
+				<name value="LForearm">
+					<component value="X" frames="1" data="287.947479" />
+				</name>
+				<name value="LHand">
+					<component value="X" frames="1" data="117.119400" />
+				</name>
+				<name value="Head">
+					<component value="X" frames="1" data="305.148590" />
+				</name>
+			</folder>
+			<folder value="FORCE">
+				<name value="FP1_CORNER1">
+					<component value="X" frames="1" data="-143.589996" />
+					<component value="Y" frames="1" data="2697.669922" />
+					<component value="Z" frames="1" data="-155.580994" />
+				</name>
+				<name value="FP1_CORNER2">
+					<component value="X" frames="1" data="447.760010" />
+					<component value="Y" frames="1" data="2697.439941" />
+					<component value="Z" frames="1" data="-154.307999" />
+				</name>
+				<name value="FP1_CORNER3">
+					<component value="X" frames="1" data="447.923004" />
+					<component value="Y" frames="1" data="1517.270020" />
+					<component value="Z" frames="1" data="-59.940498" />
+				</name>
+				<name value="FP1_CORNER4">
+					<component value="X" frames="1" data="-146.389008" />
+					<component value="Y" frames="1" data="1517.410034" />
+					<component value="Z" frames="1" data="-60.053101" />
+				</name>
+				<name value="FP2_CORNER1">
+					<component value="X" frames="1" data="463.157990" />
+					<component value="Y" frames="1" data="2699.979980" />
+					<component value="Z" frames="1" data="-156.753998" />
+				</name>
+				<name value="FP2_CORNER2">
+					<component value="X" frames="1" data="1053.609985" />
+					<component value="Y" frames="1" data="2695.739990" />
+					<component value="Z" frames="1" data="-154.804001" />
+				</name>
+				<name value="FP2_CORNER3">
+					<component value="X" frames="1" data="1050.150024" />
+					<component value="Y" frames="1" data="1516.449951" />
+					<component value="Z" frames="1" data="-58.389099" />
+				</name>
+				<name value="FP2_CORNER4">
+					<component value="X" frames="1" data="460.934998" />
+					<component value="Y" frames="1" data="1516.010010" />
+					<component value="Z" frames="1" data="-58.516499" />
+				</name>
+				<name value="FP3_CORNER1">
+					<component value="X" frames="1" data="10.029800" />
+					<component value="Y" frames="1" data="9.740550" />
+					<component value="Z" frames="1" data="11.435800" />
+				</name>
+				<name value="FP3_CORNER2">
+					<component value="X" frames="1" data="13.013700" />
+					<component value="Y" frames="1" data="602.890015" />
+					<component value="Z" frames="1" data="11.315400" />
+				</name>
+				<name value="FP3_CORNER3">
+					<component value="X" frames="1" data="898.833008" />
+					<component value="Y" frames="1" data="603.502014" />
+					<component value="Z" frames="1" data="12.911800" />
+				</name>
+				<name value="FP3_CORNER4">
+					<component value="X" frames="1" data="895.468018" />
+					<component value="Y" frames="1" data="10.278300" />
+					<component value="Z" frames="1" data="11.481300" />
+				</name>
+			</folder>
+		</type>
+		<type value="DERIVED">
+			<folder value="SEG_ROT">
+				<name value="Pelvis_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-0.022526,-0.000402,0.022928" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0.000217,0.008384,-0.008656" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="9.617054,9.618823,9.589410" />
+				</name>
+				<name value="RThigh_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-6.901423,-6.911788,-6.909285" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-5.359752,-5.362441,-5.351417" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-16.264702,-16.267376,-16.275261" />
+				</name>
+				<name value="RLeg_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-3.709085,-3.702643,-3.713883" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-6.627543,-6.628720,-6.627644" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-9.016751,-9.035164,-9.021189" />
+				</name>
+				<name value="RFoot_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="179.983704,-179.990936,-179.992706" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-0.000793,0.083623,-0.083054" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-149.018661,-149.040192,-148.985062" />
+				</name>
+				<name value="LThigh_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-5.334312,-5.344004,-5.357681" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1.475010,1.462629,1.477171" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="15.657811,15.673848,15.687304" />
+				</name>
+				<name value="LLeg_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="2.882221,2.881680,2.874007" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="6.334904,6.336684,6.335853" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="20.937698,20.941223,20.932598" />
+				</name>
+				<name value="LFoot_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0.008827,-0.008882,0.000051" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-0.019618,-0.020577,0.040175" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0.405295,0.399069,0.398348" />
+				</name>
+				<name value="Thorax_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="6.665223,6.662300,6.665769" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="2.667367,2.673537,2.675301" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="6.872752,6.873546,6.875208" />
+				</name>
+				<name value="RArm_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="90.793968,90.782921,90.784653" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-13.477421,-13.480576,-13.474280" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="10.032212,10.020941,10.021065" />
+				</name>
+				<name value="RForearm_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-178.365067,-178.369583,-178.369263" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="10.504171,10.494291,10.493734" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="108.515274,108.516342,108.510574" />
+				</name>
+				<name value="RHand_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-149.662247,-149.646133,-149.651398" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-0.330937,-0.309688,-0.350941" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="111.146584,111.139153,111.164024" />
+				</name>
+				<name value="LArm_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="75.279945,75.282974,75.285622" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="20.950645,20.963310,20.960508" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-9.033981,-9.037027,-9.044877" />
+				</name>
+				<name value="LForearm_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="161.861740,161.865234,161.864227" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-8.369119,-8.372525,-8.379551" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-102.463676,-102.472160,-102.469551" />
+				</name>
+				<name value="LHand_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="162.031723,162.062317,162.061111" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-22.056257,-22.065180,-22.061335" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-101.365395,-101.216461,-101.319923" />
+				</name>
+				<name value="Head_wrt_Lab">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="18.754665,18.775869,18.774464" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0.015944,0.007487,-0.007571" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-2.669497,-2.648301,-2.617121" />
+				</name>
+			</folder>
+			<folder value="SEG_POS">
+				<name value="Pelvis">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="442.729584,442.688995,442.749054" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="511.376129,511.440338,511.511993" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1066.384766,1066.448975,1066.516846" />
+				</name>
+				<name value="RHip">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="539.461426,539.431335,539.501160" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="527.756409,527.840454,527.863647" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1043.655640,1043.658447,1043.691162" />
+				</name>
+				<name value="RKnee">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="582.164795,582.149231,582.156006" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="473.060150,473.061340,473.100006" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="591.756592,591.785522,591.753784" />
+				</name>
+				<name value="RAnkle">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="649.035828,649.027405,649.043701" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="451.157440,451.196198,451.147369" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="140.317657,140.294754,140.271255" />
+				</name>
+				<name value="LHip">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="345.996368,345.929565,346.015533" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="494.960449,495.044342,495.191681" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1042.864258,1042.874634,1042.877930" />
+				</name>
+				<name value="LKnee">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="333.699585,333.730042,333.696747" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="450.544098,450.551849,450.599518" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="567.258301,567.265503,567.269836" />
+				</name>
+				<name value="LAnkle">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="293.823700,293.849182,293.844727" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="459.313049,459.328064,459.315521" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="138.863281,138.880280,138.858276" />
+				</name>
+				<name value="Thorax">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="468.217987,468.225983,468.259430" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="447.650879,447.681580,447.649475" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1633.811035,1633.804565,1633.787109" />
+				</name>
+				<name value="RShoulder">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="663.539917,663.538635,663.568848" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="478.540131,478.571899,478.551117" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1553.106323,1553.077759,1553.057007" />
+				</name>
+				<name value="RElbow">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="736.297546,736.312988,736.309814" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="782.095337,782.123840,782.110901" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1557.313110,1557.225952,1557.214355" />
+				</name>
+				<name value="RWrist">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="686.855652,686.876099,686.882751" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="774.454102,774.509949,774.551636" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1824.050781,1823.996094,1823.959839" />
+				</name>
+				<name value="LShoulder">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="265.932495,265.933655,265.965698" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="434.012756,434.034729,434.000305" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1565.575073,1565.590698,1565.578003" />
+				</name>
+				<name value="LElbow">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="159.753143,159.693024,159.738632" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="702.231262,702.234192,702.208069" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1495.109009,1495.144775,1495.143066" />
+				</name>
+				<name value="LWrist">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="201.671860,201.618332,201.721558" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="790.922791,790.918152,790.899048" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1765.827026,1765.840332,1765.873901" />
+				</name>
+				<name value="Head">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="470.723267,470.642700,470.576752" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="404.964691,404.907593,404.869019" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1887.545776,1887.576660,1887.592529" />
+				</name>
+			</folder>
+			<folder value="FORCE">
+				<name value="FP1_FORCE">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0,0,0" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0,0,0" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0,0,0" />
+				</name>
+				<name value="FP1_FREEMOMENT">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0,0,0" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0,0,0" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0,0,0" />
+				</name>
+				<name value="FP1_COP">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="nodata,nodata,nodata" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="nodata,nodata,nodata" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="nodata,nodata,nodata" />
+				</name>
+				<name value="FP2_FORCE">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0,0,0" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0,0,0" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0,0,0" />
+				</name>
+				<name value="FP2_FREEMOMENT">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0,0,0" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0,0,0" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0,0,0" />
+				</name>
+				<name value="FP2_COP">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="nodata,nodata,nodata" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="nodata,nodata,nodata" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="nodata,nodata,nodata" />
+				</name>
+				<name value="FP3_FORCE">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-11.643382,-11.735748,-11.367510" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-2.342953,-2.172419,-2.344759" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="1033.478149,1033.790894,1033.478638" />
+				</name>
+				<name value="FP3_FREEMOMENT">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0.004005,0.004138,0.004178" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="0.005341,0.005519,0.005571" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="-2.224151,-2.298307,-2.320189" />
+				</name>
+				<name value="FP3_COP">
+					<component value="X" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="463.030823,463.023102,463.046387" />
+					<component value="Y" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="487.214661,487.008942,487.335510" />
+					<component value="Z" Frame_Start="1" Frame_End="3" Time_Start="0.000000" Time_End="0.006667" frames="3" data="12.235414,12.234906,12.235732" />
+				</name>
+			</folder>
+		</type>
+	</owner>
+</v3d>

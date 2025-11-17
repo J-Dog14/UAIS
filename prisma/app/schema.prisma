@@ -1,0 +1,28 @@
+// App Database Schema
+// This is the main application database (source of truth for User/athlete UUIDs)
+
+generator client {
+  provider        = "prisma-client-js"
+  output          = "../generated/app"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("APP_DATABASE_URL")
+  schemas  = ["public"]
+}
+
+// User table from the app database
+// This is the source of truth for athlete UUIDs in the application
+model User {
+  id        String   @id @default(uuid()) @map("uuid")
+  name      String   @db.Text
+  email     String?  @db.Text
+  createdAt DateTime @default(now()) @map("createdAt") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updatedAt") @db.Timestamptz
+
+  @@schema("public")
+  @@map("\"User\"")
+}
+
