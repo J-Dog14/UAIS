@@ -25,11 +25,10 @@ model DAthletes {
   dateOfBirth       DateTime? @map("date_of_birth") @db.Date
   age               Decimal? @db.Decimal
   ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
   gender            String?  @db.Text
   height            Decimal? @db.Decimal
   weight            Decimal? @db.Decimal
-  email             String?  @db.Text
-  phone             String?  @db.Text
   notes             String?  @db.Text
   
   // Metadata
@@ -97,6 +96,8 @@ model FAthleticScreen {
   sessionDate     DateTime @map("session_date") @db.Date
   sourceSystem    String   @map("source_system") @db.VarChar(50)
   sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  ageAtCollection Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup        String?  @map("age_group") @db.Text
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // Relation
@@ -119,6 +120,8 @@ model FAthleticScreenCMJ {
   sourceSystem      String   @default("athletic_screen") @map("source_system") @db.VarChar(50)
   sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
   trialName         String?  @map("trial_name") @db.Text
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // CMJ Metrics
@@ -159,6 +162,8 @@ model FAthleticScreenDJ {
   sourceSystem      String   @default("athletic_screen") @map("source_system") @db.VarChar(50)
   sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
   trialName         String?  @map("trial_name") @db.Text
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // DJ Metrics
@@ -202,6 +207,8 @@ model FAthleticScreenSLV {
   sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
   trialName         String?  @map("trial_name") @db.Text
   side              String?  @db.Text
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // SLV Metrics
@@ -241,6 +248,8 @@ model FAthleticScreenNMT {
   sourceSystem      String   @default("athletic_screen") @map("source_system") @db.VarChar(50)
   sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
   trialName         String?  @map("trial_name") @db.Text
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // NMT Metrics
@@ -266,6 +275,8 @@ model FAthleticScreenPPU {
   sourceSystem      String   @default("athletic_screen") @map("source_system") @db.VarChar(50)
   sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
   trialName         String?  @map("trial_name") @db.Text
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // PPU Metrics
@@ -305,6 +316,8 @@ model FProSup {
   sessionDate     DateTime @map("session_date") @db.Date
   sourceSystem    String   @map("source_system") @db.VarChar(50)
   sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  ageAtCollection Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup        String?  @map("age_group") @db.Text
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // Pro-Sup specific fields
@@ -367,6 +380,8 @@ model FReadinessScreen {
   sessionDate     DateTime @map("session_date") @db.Date
   sourceSystem    String   @map("source_system") @db.VarChar(50)
   sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  ageAtCollection Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup        String?  @map("age_group") @db.Text
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // Relation
@@ -389,6 +404,8 @@ model FReadinessScreenI {
   sourceSystem      String   @default("readiness_screen") @map("source_system") @db.VarChar(50)
   sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
   trialId           Int?     @map("trial_id")
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // I Test Metrics (Isometric I)
@@ -414,6 +431,8 @@ model FReadinessScreenY {
   sourceSystem      String   @default("readiness_screen") @map("source_system") @db.VarChar(50)
   sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
   trialId           Int?     @map("trial_id")
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // Y Test Metrics (Isometric Y)
@@ -439,6 +458,8 @@ model FReadinessScreenT {
   sourceSystem      String   @default("readiness_screen") @map("source_system") @db.VarChar(50)
   sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
   trialId           Int?     @map("trial_id")
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // T Test Metrics (Isometric T)
@@ -464,6 +485,8 @@ model FReadinessScreenIR90 {
   sourceSystem      String   @default("readiness_screen") @map("source_system") @db.VarChar(50)
   sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
   trialId           Int?     @map("trial_id")
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // IR90 Test Metrics (Isometric IR90)
@@ -489,6 +512,8 @@ model FReadinessScreenCMJ {
   sourceSystem      String   @default("readiness_screen") @map("source_system") @db.VarChar(50)
   sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
   trialId           Int?     @map("trial_id")
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // CMJ Metrics
@@ -516,6 +541,8 @@ model FReadinessScreenPPU {
   sourceSystem      String   @default("readiness_screen") @map("source_system") @db.VarChar(50)
   sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
   trialId           Int?     @map("trial_id")
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // PPU Metrics (Push-up)
@@ -542,6 +569,8 @@ model FMobility {
   sessionDate     DateTime @map("session_date") @db.Date
   sourceSystem    String   @default("mobility") @map("source_system") @db.VarChar(50)
   sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  ageAtCollection Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup        String?  @map("age_group") @db.Text
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // Assessment Date (from column A, rows 10-54)
@@ -563,6 +592,8 @@ model FProteus {
   sessionDate     DateTime @map("session_date") @db.Date
   sourceSystem    String   @default("proteus") @map("source_system") @db.VarChar(50)
   sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  ageAtCollection Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup        String?  @map("age_group") @db.Text
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // Session Information
@@ -656,6 +687,8 @@ model FKinematicsPitching {
   metricName      String   @map("metric_name") @db.Text
   frame           Int
   value           Decimal? @db.Decimal
+  ageAtCollection Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup        String?  @map("age_group") @db.Text
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // Relation
@@ -675,6 +708,8 @@ model FKinematicsHitting {
   sessionDate     DateTime @map("session_date") @db.Date
   sourceSystem    String   @map("source_system") @db.VarChar(50)
   sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  ageAtCollection Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup        String?  @map("age_group") @db.Text
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
   
   // Relation

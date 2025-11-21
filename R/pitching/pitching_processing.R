@@ -99,7 +99,7 @@ if (!athlete_manager_loaded) {
 
 # ---------- Configuration ----------
 # Set to NULL to use current directory, or specify path
-DATA_ROOT <- "H:/Pitching/demo_data"  # Set to your pitching data directory path, NULL for testing with local files
+DATA_ROOT <- "H:/Pitching/Data"  # Set to your pitching data directory path, NULL for testing with local files
 USE_WAREHOUSE <- TRUE  # Set to TRUE to write to PostgreSQL warehouse, FALSE for local SQLite
 DB_FILE <- "pitching_data.db"  # Only used if USE_WAREHOUSE = FALSE
 TRUNCATE_BEFORE_INSERT <- FALSE  # Set to TRUE to clear table before inserting (prevents duplicates on re-run)
@@ -821,6 +821,12 @@ process_all_files <- function() {
         }
       }
       
+      # Safety check: ensure uid was set
+      if (!"uid" %in% names(athlete_info) || is.na(athlete_info$uid[1])) {
+        log_progress("  [ERROR] uid was not set for athlete", athlete_name, "- generating now")
+        athlete_info$uid <- uuid::UUIDgenerate()
+      }
+      
       dir_path <- dirname(sf)
       athlete_list[[length(athlete_list) + 1]] <- athlete_info
       
@@ -987,7 +993,7 @@ process_all_files <- function() {
               }
             }
             
-            if (!is.null(found_athlete) && nrow(found_athlete) > 0) {
+            if (!is.null(found_athlete) && nrow(found_athlete) > 0 && "uid" %in% names(found_athlete) && !is.na(found_athlete$uid[1])) {
               matched_uid <- found_athlete$uid[1]
               # Cache this mapping for future owners in same directory
               owner_mapping[[dir_path_normalized]] <- matched_uid
@@ -1024,7 +1030,7 @@ process_all_files <- function() {
                 }
               }
               
-              if (!is.null(found_athlete) && nrow(found_athlete) > 0) {
+              if (!is.null(found_athlete) && nrow(found_athlete) > 0 && "uid" %in% names(found_athlete) && !is.na(found_athlete$uid[1])) {
                 matched_uid <- found_athlete$uid[1]
                 owner_mapping[[dir_path_normalized]] <- matched_uid
                 if (i <= 3) {
@@ -1109,7 +1115,7 @@ process_all_files <- function() {
           }
           
           # Only use match if score is high enough (at least 2 common directory parts to avoid false matches)
-          if (!is.null(best_match) && best_match_score >= 2) {
+          if (!is.null(best_match) && best_match_score >= 2 && "uid" %in% names(best_match) && !is.na(best_match$uid[1])) {
             matched_uid <- best_match$uid[1]
             if (i <= 3) {
               cat("    [MATCH] Owner", owner_name, "matched via directory similarity (score:", best_match_score, ")\n")
@@ -1410,7 +1416,8 @@ process_all_files <- function() {
             metric_name TEXT NOT NULL,
             frame INTEGER NOT NULL,
             value NUMERIC,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT idx_f_pitching_unique UNIQUE (athlete_uuid, session_date, metric_name, frame)
           )
         ')
         
@@ -1437,6 +1444,32 @@ process_all_files <- function() {
           log_progress("  Table needs metric_name, frame, and value columns")
           log_progress("  You may need to drop and recreate the table, or use a different table name")
           stop("f_kinematics_pitching table exists but has incompatible structure. Please drop and recreate it.")
+        }
+        
+        # Check if unique constraint exists
+        constraint_check <- DBI::dbGetQuery(con, "
+          SELECT constraint_name
+          FROM information_schema.table_constraints
+          WHERE table_schema = 'public'
+          AND table_name = 'f_kinematics_pitching'
+          AND constraint_type = 'UNIQUE'
+          AND constraint_name = 'idx_f_pitching_unique'
+        ")
+        
+        if (nrow(constraint_check) == 0) {
+          log_progress("  Unique constraint missing, adding it...")
+          tryCatch({
+            DBI::dbExecute(con, "
+              ALTER TABLE public.f_kinematics_pitching
+              ADD CONSTRAINT idx_f_pitching_unique UNIQUE (athlete_uuid, session_date, metric_name, frame)
+            ")
+            log_progress("  [SUCCESS] Added unique constraint")
+          }, error = function(e) {
+            log_progress("  [WARNING] Could not add unique constraint:", conditionMessage(e))
+            log_progress("  This may cause issues with ON CONFLICT. You may need to manually add the constraint.")
+          })
+        } else {
+          log_progress("  Unique constraint exists")
         }
       }
       
