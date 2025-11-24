@@ -2,6 +2,7 @@
 Database operations for Readiness Screen.
 Handles database setup, schema creation, and table operations.
 """
+import os
 import sqlite3
 from typing import Optional
 
@@ -123,7 +124,14 @@ def get_connection(db_path: str) -> sqlite3.Connection:
     Returns:
         SQLite connection object.
     """
-    return sqlite3.connect(db_path)
+    # Ensure directory exists
+    db_dir = os.path.dirname(os.path.abspath(db_path))
+    if not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+    
+    # Use absolute path to avoid issues
+    abs_path = os.path.abspath(db_path)
+    return sqlite3.connect(abs_path)
 
 
 def create_tables(conn: sqlite3.Connection):
@@ -134,7 +142,13 @@ def create_tables(conn: sqlite3.Connection):
         conn: SQLite connection object.
     """
     cursor = conn.cursor()
-    cursor.executescript("".join(TABLE_SCHEMAS.values()))
+    # Execute each CREATE TABLE statement separately
+    for table_name, schema in TABLE_SCHEMAS.items():
+        # Strip whitespace and ensure statement ends with semicolon
+        schema_clean = schema.strip()
+        if not schema_clean.endswith(';'):
+            schema_clean += ';'
+        cursor.execute(schema_clean)
     conn.commit()
 
 
@@ -159,10 +173,33 @@ def ensure_cmj_ppu_columns(conn: sqlite3.Connection):
     conn.commit()
 
 
+def get_participant_id(conn: sqlite3.Connection, name: str, creation_date: str) -> Optional[int]:
+    """
+    Get existing Participant_ID for a participant with the given name and creation_date.
+    
+    Args:
+        conn: SQLite connection.
+        name: Participant name.
+        creation_date: Creation date string.
+    
+    Returns:
+        Participant_ID if found, None otherwise.
+    """
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT Participant_ID FROM Participant 
+        WHERE Name = ? AND Creation_Date = ?
+    """, (name, creation_date))
+    result = cursor.fetchone()
+    return result[0] if result else None
+
+
 def insert_participant(conn: sqlite3.Connection, name: str, height: float,
-                      weight: float, plyo_day: str, creation_date: str) -> int:
+                      weight: float, plyo_day: str, creation_date: str,
+                      skip_if_exists: bool = True) -> int:
     """
     Insert a new participant and return the Participant_ID.
+    If skip_if_exists is True and participant already exists, returns existing ID.
     
     Args:
         conn: SQLite connection.
@@ -171,11 +208,21 @@ def insert_participant(conn: sqlite3.Connection, name: str, height: float,
         weight: Weight value.
         plyo_day: Plyometric day.
         creation_date: Creation date string.
+        skip_if_exists: If True, return existing ID if participant already exists.
     
     Returns:
-        Participant_ID of the inserted participant.
+        Participant_ID of the inserted or existing participant.
     """
     cursor = conn.cursor()
+    
+    # Check if participant already exists
+    if skip_if_exists:
+        existing_id = get_participant_id(conn, name, creation_date)
+        if existing_id is not None:
+            print(f"   Participant already exists: {name} ({creation_date}) - ID: {existing_id}")
+            return existing_id
+    
+    # Insert new participant
     cursor.execute("""
         INSERT INTO Participant (Name, Height, Weight, Plyo_Day, Creation_Date)
         VALUES (?, ?, ?, ?, ?)

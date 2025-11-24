@@ -1,6 +1,11 @@
 pandas
+numpy
+scipy
 SQLAlchemy
 psycopg2-binary   # if Postgres
 duckdb
 python-dotenv
 pyyaml
+dash
+plotly
+reportlab

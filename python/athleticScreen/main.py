@@ -4,7 +4,15 @@ This script coordinates all processing steps: file parsing, database creation,
 power analysis, and optional report generation.
 """
 import os
+import sys
 from pathlib import Path
+
+# Add python directory to path so imports work
+project_root = Path(__file__).parent.parent.parent
+python_dir = project_root / "python"
+if str(python_dir) not in sys.path:
+    sys.path.insert(0, str(python_dir))
+
 from common.config import get_raw_paths
 
 from database import create_database, create_tables, insert_row, get_connection
@@ -17,7 +25,8 @@ from database_replication import replicate_database, clear_processed_files
 # from report_generation import generate_report
 
 
-def process_raw_files(folder_path: str, db_path: str, reset_db: bool = False):
+def process_raw_files(folder_path: str, db_path: str, reset_db: bool = False, 
+                     skip_if_exists: bool = True):
     """
     Process all raw movement files and populate the database.
     
@@ -25,6 +34,7 @@ def process_raw_files(folder_path: str, db_path: str, reset_db: bool = False):
         folder_path: Directory containing raw .txt files.
         db_path: Path to output database.
         reset_db: If True, delete existing database and create fresh.
+        skip_if_exists: If True, skip insertion if record already exists.
     """
     print("=" * 60)
     print("Athletic Screen Data Processing")
@@ -40,6 +50,7 @@ def process_raw_files(folder_path: str, db_path: str, reset_db: bool = False):
     print("\n2. Processing movement files...")
     processed_count = 0
     skipped_count = 0
+    duplicate_count = 0
     
     for file_name in os.listdir(folder_path):
         if not file_name.endswith('.txt'):
@@ -60,13 +71,17 @@ def process_raw_files(folder_path: str, db_path: str, reset_db: bool = False):
         cols = list(parsed_data.keys())
         vals = [parsed_data[col] for col in cols]
         
-        insert_row(cursor, movement_type, cols, vals)
-        processed_count += 1
-        print(f"  Processed {file_name} -> {movement_type}")
+        inserted = insert_row(cursor, movement_type, cols, vals, skip_if_exists=skip_if_exists)
+        if inserted:
+            processed_count += 1
+            print(f"  Processed {file_name} -> {movement_type}")
+        else:
+            duplicate_count += 1
     
     conn.commit()
     print(f"\n  Processed: {processed_count} files")
-    print(f"  Skipped: {skipped_count} files")
+    print(f"  Skipped (duplicates): {duplicate_count} files")
+    print(f"  Skipped (errors): {skipped_count} files")
     
     # Update with power metrics
     print("\n3. Computing power analysis metrics...")

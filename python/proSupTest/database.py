@@ -44,7 +44,29 @@ def ensure_table_exists(conn: sqlite3.Connection, table_name: str = 'pro_sup_dat
     df_empty.to_sql(table_name, conn, if_exists='append', index=False)
 
 
-def insert_xml_data(conn: sqlite3.Connection, data: dict, table_name: str = 'pro_sup_data'):
+def check_name_exists(conn: sqlite3.Connection, name: str, test_date: str, 
+                     table_name: str = 'pro_sup_data') -> bool:
+    """
+    Check if a record with the given name and test_date already exists.
+    
+    Args:
+        conn: SQLite connection.
+        name: Athlete name.
+        test_date: Test date.
+        table_name: Name of the table (default: 'pro_sup_data').
+    
+    Returns:
+        True if record exists, False otherwise.
+    """
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT COUNT(*) FROM {table_name} WHERE name = ? AND test_date = ?", 
+                   (name, test_date))
+    count = cursor.fetchone()[0]
+    return count > 0
+
+
+def insert_xml_data(conn: sqlite3.Connection, data: dict, table_name: str = 'pro_sup_data',
+                    skip_if_exists: bool = True):
     """
     Insert XML data into the database.
     
@@ -52,15 +74,26 @@ def insert_xml_data(conn: sqlite3.Connection, data: dict, table_name: str = 'pro
         conn: SQLite connection.
         data: Dictionary with data to insert (keys should match FINAL_COLUMNS).
         table_name: Name of the table (default: 'pro_sup_data').
+        skip_if_exists: If True, skip insertion if record with same name and test_date exists.
+    
+    Returns:
+        True if data was inserted, False if skipped.
     """
     # Ensure table exists
     ensure_table_exists(conn, table_name)
+    
+    # Check if record already exists
+    if skip_if_exists:
+        if check_name_exists(conn, data.get('name'), data.get('test_date'), table_name):
+            print(f"   Skipping {data.get('name')} on {data.get('test_date')} - already exists")
+            return False
     
     # Create DataFrame with data
     df = pd.DataFrame([data], columns=FINAL_COLUMNS)
     
     # Insert
     df.to_sql(table_name, conn, if_exists='append', index=False)
+    return True
 
 
 def update_ascii_data(conn: sqlite3.Connection, values: dict, 

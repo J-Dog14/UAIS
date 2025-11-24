@@ -157,7 +157,54 @@ def ensure_power_metric_columns(conn: sqlite3.Connection, table: str):
     conn.commit()
 
 
-def insert_row(cursor: sqlite3.Cursor, table: str, cols: list, vals: list):
+def check_row_exists(cursor: sqlite3.Cursor, table: str, name: str, date: str, 
+                    trial_name: str = None, side: str = None) -> bool:
+    """
+    Check if a row with the given name, date, and optionally trial_name/side already exists.
+    
+    Args:
+        cursor: SQLite cursor.
+        table: Table name.
+        name: Athlete name.
+        date: Date string.
+        trial_name: Trial name (optional).
+        side: Side (Left/Right) for SLV table (optional).
+    
+    Returns:
+        True if row exists, False otherwise.
+    """
+    # Build WHERE clause based on table structure
+    if table == 'SLV':
+        # SLV has name, date, trial_name, and side
+        if side:
+            cursor.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE name = ? AND date = ? AND trial_name = ? AND side = ?",
+                (name, date, trial_name, side)
+            )
+        else:
+            cursor.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE name = ? AND date = ? AND trial_name = ?",
+                (name, date, trial_name)
+            )
+    else:
+        # Other tables have name, date, and trial_name
+        if trial_name:
+            cursor.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE name = ? AND date = ? AND trial_name = ?",
+                (name, date, trial_name)
+            )
+        else:
+            cursor.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE name = ? AND date = ?",
+                (name, date)
+            )
+    
+    count = cursor.fetchone()[0]
+    return count > 0
+
+
+def insert_row(cursor: sqlite3.Cursor, table: str, cols: list, vals: list, 
+               skip_if_exists: bool = True):
     """
     Insert a row into a table.
     
@@ -166,9 +213,37 @@ def insert_row(cursor: sqlite3.Cursor, table: str, cols: list, vals: list):
         table: Table name.
         cols: List of column names.
         vals: List of values (must match cols order).
+        skip_if_exists: If True, skip insertion if row already exists.
+    
+    Returns:
+        True if row was inserted, False if skipped.
     """
+    # Extract key fields for duplicate check
+    name = None
+    date = None
+    trial_name = None
+    side = None
+    
+    for i, col in enumerate(cols):
+        if col.lower() == 'name':
+            name = vals[i]
+        elif col.lower() == 'date':
+            date = vals[i]
+        elif col.lower() == 'trial_name':
+            trial_name = vals[i]
+        elif col.lower() == 'side':
+            side = vals[i]
+    
+    # Check if row already exists
+    if skip_if_exists and name and date:
+        if check_row_exists(cursor, table, name, date, trial_name, side):
+            print(f"   Skipping {name} - {date} - {trial_name or ''} - {side or ''} (already exists)")
+            return False
+    
+    # Insert row
     placeholders = ",".join(["?"] * len(vals))
     cursor.execute(f"INSERT INTO {table} ({','.join(cols)}) VALUES ({placeholders})", vals)
+    return True
 
 
 def get_connection(db_path: str) -> sqlite3.Connection:
