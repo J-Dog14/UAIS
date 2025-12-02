@@ -52,6 +52,13 @@ def ring_gauge(pct: float, file_path: str, size: int = 240) -> str:
     Returns:
         Path to the generated image file.
     """
+    import tempfile
+    
+    # Ensure file_path is absolute and in temp directory
+    if not os.path.isabs(file_path):
+        temp_dir = tempfile.gettempdir()
+        file_path = os.path.join(temp_dir, file_path)
+    
     pct = max(0, min(100, pct))
     fig = go.Figure(go.Pie(
         values=[pct, 100-pct],
@@ -71,7 +78,16 @@ def ring_gauge(pct: float, file_path: str, size: int = 240) -> str:
         paper_bgcolor="black",
         showlegend=False
     )
-    fig.write_image(file_path, width=size, height=size)  # needs kaleido
+    
+    try:
+        fig.write_image(file_path, width=size, height=size, engine="kaleido")
+    except Exception as e:
+        # Fallback: try without specifying engine
+        try:
+            fig.write_image(file_path, width=size, height=size)
+        except Exception as e2:
+            raise RuntimeError(f"Failed to export plotly image. Make sure kaleido is installed: pip install kaleido. Error: {e2}")
+    
     return file_path
 
 
@@ -92,6 +108,13 @@ def rom_bars(rom0: float, rom1: float, rom2: float,
     Returns:
         Path to the generated image file.
     """
+    import tempfile
+    
+    # Ensure file_path is absolute and in temp directory
+    if not os.path.isabs(file_path):
+        temp_dir = tempfile.gettempdir()
+        file_path = os.path.join(temp_dir, file_path)
+    
     vals = [rom0, rom1, rom2]
     bar_colors = [MUTED_HEX] * 3
     bar_colors[highlight_idx] = ACCENT_HEX
@@ -112,7 +135,16 @@ def rom_bars(rom0: float, rom1: float, rom2: float,
         paper_bgcolor="black",
         plot_bgcolor="black",
     )
-    fig.write_image(file_path, width=size[0], height=size[1])
+    
+    try:
+        fig.write_image(file_path, width=size[0], height=size[1], engine="kaleido")
+    except Exception as e:
+        # Fallback: try without specifying engine
+        try:
+            fig.write_image(file_path, width=size[0], height=size[1])
+        except Exception as e2:
+            raise RuntimeError(f"Failed to export plotly image. Make sure kaleido is installed: pip install kaleido. Error: {e2}")
+    
     return file_path
 
 

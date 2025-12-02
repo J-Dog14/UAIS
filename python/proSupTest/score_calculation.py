@@ -93,8 +93,8 @@ def calculate_total_score(df: pd.DataFrame,
     # Ensure numeric types
     df[ROM_COLUMNS] = df[ROM_COLUMNS].apply(pd.to_numeric, errors='coerce')
     
-    # Calculate max values for scaling
-    max_rom = df[ROM_COLUMNS].sum(axis=1).max()  # Max total ROM across all intervals
+    # Calculate max values for scaling (matching notebook exactly)
+    max_rom = df[ROM_COLUMNS].max().sum()  # Sum of max values from each column
     max_fatigue_score = df['total_fatigue_score'].max()
     max_consistency_penalty = df['consistency_penalty'].max()
     

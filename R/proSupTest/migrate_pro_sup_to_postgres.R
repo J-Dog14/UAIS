@@ -167,39 +167,55 @@ convert_to_numeric <- function(val) {
 parse_test_date <- function(date_val) {
   if (is.na(date_val) || date_val == "") return(NA)
   
+  # If it's already a Date object, return it
+  if (inherits(date_val, "Date")) {
+    return(date_val)
+  }
+  
   # Convert to character if needed
   date_str <- as.character(date_val)
   
-  # First, check if it's a numeric value (Excel serial date)
+  # First, try parsing as date string (YYYY-MM-DD format is most common)
+  # This should be tried BEFORE Excel serial date conversion
+  formats <- c("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y")
+  for (fmt in formats) {
+    tryCatch({
+      date_obj <- as.Date(date_str, format = fmt)
+      if (!is.na(date_obj) && date_obj > as.Date("2000-01-01") && date_obj < as.Date("2100-01-01")) {
+        return(date_obj)
+      }
+    }, error = function(e) NULL)
+  }
+  
+  # If string parsing failed, check if it's a numeric value (Excel serial date)
+  # Only treat as Excel serial if it's clearly a serial number (large numbers)
   if (grepl("^\\d+$", date_str)) {
     serial_num <- as.numeric(date_str)
-    # Excel serial dates: days since 1900-01-01 (but Excel incorrectly treats 1900 as leap year)
-    if (serial_num >= 1 && serial_num < 1000000) {
+    # Excel serial dates: days since 1900-01-01
+    # Valid Excel serial dates are typically > 1 and < 100000 (covers dates up to ~2174)
+    # But dates like 20342 would be around 1955, which is wrong for 2025 dates
+    # So we need to check: if the number is > 40000, it's likely a date after 2009
+    # Excel serial for 2000-01-01 is 36526, for 2025-01-01 is around 45658
+    if (serial_num >= 1 && serial_num < 100000) {
       tryCatch({
         # Excel dates: serial number represents days since 1900-01-01
         # Excel incorrectly counts 1900 as leap year, so we adjust
         date_obj <- as.Date(serial_num - 1, origin = "1899-12-30")
-        if (!is.na(date_obj) && date_obj > as.Date("1900-01-01") && date_obj < as.Date("2100-01-01")) {
+        # Only accept if it's a reasonable date (after 2000)
+        if (!is.na(date_obj) && date_obj > as.Date("2000-01-01") && date_obj < as.Date("2100-01-01")) {
           return(date_obj)
         }
       }, error = function(e) NULL)
     }
   }
   
-  # Try various date string formats
-  formats <- c("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y")
-  for (fmt in formats) {
-    tryCatch({
-      date_obj <- as.Date(date_str, format = fmt)
-      if (!is.na(date_obj)) return(date_obj)
-    }, error = function(e) NULL)
-  }
-  
   # If all fail, try as.Date with default parsing
   tryCatch({
     date_obj <- as.Date(date_str)
-    if (!is.na(date_obj)) return(date_obj)
-  }, error = function(e) NA)
+    if (!is.na(date_obj) && date_obj > as.Date("2000-01-01") && date_obj < as.Date("2100-01-01")) {
+      return(date_obj)
+    }
+  }, error = function(e) NULL)
   
   return(NA)
 }
@@ -271,6 +287,100 @@ if (!table_name %in% tables) {
 }
 
 log_progress("\nProcessing table:", table_name, "->", pg_table_name)
+
+# Create table if it doesn't exist
+log_progress("  Ensuring PostgreSQL table exists...")
+create_table_sql <- paste0("
+CREATE TABLE IF NOT EXISTS public.", pg_table_name, " (
+    id SERIAL PRIMARY KEY,
+    athlete_uuid VARCHAR(36) NOT NULL,
+    session_date DATE NOT NULL,
+    source_system VARCHAR(50) NOT NULL,
+    source_athlete_id VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    age DECIMAL,
+    height DECIMAL,
+    weight DECIMAL,
+    injury_history TEXT,
+    season_phase VARCHAR(50),
+    dynomometer_score VARCHAR(50),
+    comments TEXT,
+    forearm_rom_0to10 DECIMAL,
+    forearm_rom_10to20 DECIMAL,
+    forearm_rom_20to30 DECIMAL,
+    forearm_rom DECIMAL,
+    tot_rom_0to10 DECIMAL,
+    tot_rom_10to20 DECIMAL,
+    tot_rom_20to30 DECIMAL,
+    tot_rom DECIMAL,
+    num_of_flips_0_10 DECIMAL,
+    num_of_flips_10_20 DECIMAL,
+    num_of_flips_20_30 DECIMAL,
+    num_of_flips DECIMAL,
+    avg_velo_0_10 DECIMAL,
+    avg_velo_10_20 DECIMAL,
+    avg_velo_20_30 DECIMAL,
+    avg_velo DECIMAL,
+    fatigue_index_10 DECIMAL,
+    fatigue_index_20 DECIMAL,
+    fatigue_index_30 DECIMAL,
+    total_fatigue_score DECIMAL,
+    consistency_penalty DECIMAL,
+    total_score DECIMAL,
+    cumulative_rom DECIMAL,
+    raw_total_score DECIMAL,
+    age_at_collection DECIMAL,
+    age_group TEXT
+)
+")
+
+tryCatch({
+  DBI::dbExecute(pg_conn, create_table_sql)
+  log_progress("  Table created or already exists")
+}, error = function(e) {
+  log_progress("  [WARNING] Could not create table (may already exist):", conditionMessage(e))
+})
+
+# Add missing columns if table exists but is missing some columns
+log_progress("  Checking for missing columns...")
+missing_columns <- list(
+  list(name = "cumulative_rom", type = "DECIMAL"),
+  list(name = "raw_total_score", type = "DECIMAL"),
+  list(name = "age_at_collection", type = "DECIMAL"),
+  list(name = "age_group", type = "TEXT")
+)
+
+for (col_info in missing_columns) {
+  col_name <- col_info$name
+  col_type <- col_info$type
+  
+  # Check if column exists
+  check_col_sql <- paste0("
+    SELECT COUNT(*) as cnt
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = '", pg_table_name, "'
+      AND column_name = '", col_name, "'
+  ")
+  
+  col_exists <- tryCatch({
+    result <- DBI::dbGetQuery(pg_conn, check_col_sql)
+    result$cnt[1] > 0
+  }, error = function(e) FALSE)
+  
+  if (!col_exists) {
+    add_col_sql <- paste0("
+      ALTER TABLE public.", pg_table_name, "
+      ADD COLUMN ", col_name, " ", col_type, "
+    ")
+    tryCatch({
+      DBI::dbExecute(pg_conn, add_col_sql)
+      log_progress("  Added missing column:", col_name)
+    }, error = function(e) {
+      log_progress("  [WARNING] Could not add column ", col_name, ":", conditionMessage(e))
+    })
+  }
+}
 
 # Read data from SQLite
 log_progress("  Reading data from SQLite...")
@@ -425,7 +535,117 @@ dob_df <- DBI::dbGetQuery(pg_conn, dob_query)
 dob_lookup <- setNames(dob_df$date_of_birth, dob_df$athlete_uuid)
 
 # Parse test_date to get session_date
-matched_data$session_date <- sapply(matched_data$test_date, parse_test_date)
+# The dates might be stored as strings "2025-09-11" or as numbers
+# If they're numbers like 20342, they might be days since a different epoch
+# We need to check the actual values and convert appropriately
+
+# Use lapply instead of sapply to preserve Date objects
+matched_data$session_date <- do.call("c", lapply(matched_data$test_date, function(date_val) {
+  # If it's already a Date, return it
+  if (inherits(date_val, "Date")) {
+    return(date_val)
+  }
+  
+  # Convert to character first
+  date_str <- as.character(date_val)
+  
+  # Priority 1: If it's a string that looks like a date (YYYY-MM-DD), parse it directly
+  # This should handle most cases where dates are stored as strings
+  if (grepl("^\\d{4}-\\d{2}-\\d{2}$", date_str)) {
+    date_obj <- tryCatch({
+      as.Date(date_str, format = "%Y-%m-%d")
+    }, error = function(e) NA, warning = function(w) NA)
+    
+    if (!is.na(date_obj) && inherits(date_obj, "Date") && 
+        date_obj > as.Date("2000-01-01") && date_obj < as.Date("2100-01-01")) {
+      return(date_obj)
+    }
+  }
+  
+  # Priority 2: If it's numeric, try to determine what it represents
+  if (is.numeric(date_val) && !is.na(date_val)) {
+    # If the number is very large (>= 36526), it's likely an Excel serial date
+    # Excel serial for 2000-01-01 is 36526, for 2025-01-01 is ~45658
+    if (date_val >= 36526 && date_val < 100000) {
+      tryCatch({
+        date_obj <- as.Date(date_val - 1, origin = "1899-12-30")
+        if (!is.na(date_obj) && date_obj > as.Date("2000-01-01") && date_obj < as.Date("2100-01-01")) {
+          return(date_obj)
+        }
+      }, error = function(e) NULL)
+    }
+    
+    # If the number is smaller (like 20000-30000), it might need special handling
+    # Dates like 20342 when converted as Excel serial give 1955, but should be 2025
+    # The difference is approximately 70 years = ~25,550 days
+    # So if converting gives a date before 2000, try adding the offset
+    if (date_val >= 10000 && date_val < 36526) {
+      # First, try converting as-is to see what we get
+      test_date <- tryCatch({
+        as.Date(date_val - 1, origin = "1899-12-30")
+      }, error = function(e) NA)
+      
+      # If the result is before 2000, it's likely wrong - try adding offset
+      if (!is.na(test_date) && test_date < as.Date("2000-01-01")) {
+        # Add approximately 70 years (25,550 days) to get to 2025 range
+        # Actually, let's calculate: 2025-09-11 Excel serial is ~45658
+        # 20342 + 25316 = 45658, so the offset is 25316
+        adjusted_num <- date_val + 25316
+        date_obj <- tryCatch({
+          as.Date(adjusted_num - 1, origin = "1899-12-30")
+        }, error = function(e) NA)
+        if (!is.na(date_obj) && date_obj > as.Date("2020-01-01") && date_obj < as.Date("2030-01-01")) {
+          return(date_obj)
+        }
+      }
+      
+      # Also try as Unix timestamp (days since 1970-01-01) as a fallback
+      date_obj <- tryCatch({
+        as.Date(date_val, origin = "1970-01-01")
+      }, error = function(e) NA)
+      if (!is.na(date_obj) && date_obj > as.Date("2000-01-01") && date_obj < as.Date("2100-01-01")) {
+        return(date_obj)
+      }
+    }
+  }
+  
+  # Priority 3: Try the general parse_test_date function
+  result <- parse_test_date(date_val)
+  # Ensure we return a Date object, not a number
+  if (!is.na(result) && inherits(result, "Date")) {
+    return(result)
+  }
+  
+  # If all parsing failed, return NA as Date
+  return(as.Date(NA_character_))
+}))
+
+# Ensure session_date is a Date vector
+# Check what we actually got
+print(paste("  session_date class after parsing:", class(matched_data$session_date[1])))
+print(paste("  Sample session_date values:", paste(head(matched_data$session_date, 3), collapse = ", ")))
+
+if (!inherits(matched_data$session_date, "Date")) {
+  # If it's numeric, try to convert back to Date
+  if (is.numeric(matched_data$session_date)) {
+    print("  WARNING: session_date is numeric, attempting to convert...")
+    # The numbers might be days since 1970-01-01 or Excel serial dates
+    # Try both conversions
+    tryCatch({
+      # Try as days since 1970
+      matched_data$session_date <- as.Date(matched_data$session_date, origin = "1970-01-01")
+      if (any(matched_data$session_date > as.Date("2100-01-01"), na.rm = TRUE)) {
+        # If dates are too far in future, try Excel serial conversion
+        matched_data$session_date <- as.Date(matched_data$session_date - 1, origin = "1899-12-30")
+      }
+    }, error = function(e) {
+      print(paste("  ERROR converting numeric dates:", conditionMessage(e)))
+    })
+  } else {
+    # Try to parse as character dates
+    matched_data$session_date <- as.Date(matched_data$session_date)
+  }
+}
 
 # Debug: show some date conversions
 if (nrow(matched_data) > 0) {
@@ -466,19 +686,35 @@ matched_data$age_at_collection <- mapply(function(sd, dob) {
 matched_data$age_group <- mapply(calculate_age_group, matched_data$session_date, matched_data$date_of_birth)
 
 # Convert session_date to character string BEFORE creating dataframe
-session_date_str <- if (inherits(matched_data$session_date, "Date")) {
-  format(matched_data$session_date, "%Y-%m-%d")
-} else {
-  sapply(matched_data$session_date, function(x) {
-    if (is.na(x)) return(NA_character_)
+# session_date should already be Date objects from the parsing above
+# But handle the case where they might be numbers or other types
+session_date_str <- sapply(matched_data$session_date, function(x) {
+  if (is.na(x)) return(NA_character_)
+  
+  # If it's a Date object, format it
+  if (inherits(x, "Date")) {
+    return(format(x, "%Y-%m-%d"))
+  }
+  
+  # If it's numeric, it shouldn't be - but try to convert it
+  if (is.numeric(x)) {
+    # This shouldn't happen if parsing worked correctly
+    # But if it does, try to parse it again
     parsed <- parse_test_date(x)
-    if (!is.na(parsed)) {
-      format(parsed, "%Y-%m-%d")
-    } else {
-      NA_character_
+    if (!is.na(parsed) && inherits(parsed, "Date")) {
+      return(format(parsed, "%Y-%m-%d"))
     }
-  })
-}
+    return(NA_character_)
+  }
+  
+  # Try as character
+  date_str <- as.character(x)
+  if (grepl("^\\d{4}-\\d{2}-\\d{2}$", date_str)) {
+    return(date_str)
+  }
+  
+  return(NA_character_)
+})
 
 # Build insert dataframe - convert TEXT columns to numeric where needed
 insert_df <- data.frame(
@@ -524,11 +760,18 @@ insert_df <- data.frame(
 
 # Remove any rows that still have invalid dates (numeric or NA)
 if (nrow(insert_df) > 0) {
-  # Filter out rows where session_date is NA, "NA", or just digits (Excel serial number)
-  insert_df <- insert_df[!is.na(insert_df$session_date) & 
-                         insert_df$session_date != "NA" & 
-                         !grepl("^\\d+$", insert_df$session_date) &
-                         grepl("^\\d{4}-\\d{2}-\\d{2}$", insert_df$session_date), ]
+  # Filter out rows where session_date is NA, "NA", or doesn't match date format
+  valid_date_mask <- !is.na(insert_df$session_date) & 
+                     insert_df$session_date != "NA" & 
+                     !grepl("^\\d+$", insert_df$session_date) &
+                     grepl("^\\d{4}-\\d{2}-\\d{2}$", insert_df$session_date)
+  
+  if (sum(valid_date_mask) < nrow(insert_df)) {
+    print(paste("  Filtering out", sum(!valid_date_mask), "rows with invalid dates"))
+    print(paste("  Sample invalid dates:", paste(head(insert_df$session_date[!valid_date_mask], 5), collapse = ", ")))
+  }
+  
+  insert_df <- insert_df[valid_date_mask, ]
 }
 
 if (nrow(insert_df) == 0) {
@@ -557,15 +800,22 @@ for (i in 1:nrow(insert_df)) {
     next
   }
   
-  where_parts <- c("athlete_uuid = $1", "session_date = $2")
+  # Build column list for INSERT and UPDATE
+  all_cols <- names(insert_df)
+  # Exclude id and created_at from updates (they're auto-generated)
+  update_cols <- all_cols[!all_cols %in% c("id", "created_at")]
+  # Exclude key columns from update_cols as they are in the WHERE clause
+  key_cols_for_update_exclusion <- c("athlete_uuid", "session_date")
+  update_cols <- update_cols[!update_cols %in% key_cols_for_update_exclusion]
+  
+  # Build WHERE clause for checking/updating
   where_params <- list(row$athlete_uuid, session_date_str)
-  param_num <- 3
   
   # Check if row exists
   check_sql <- paste0("
     SELECT COUNT(*) as cnt FROM public.", pg_table_name, "
-    WHERE ", paste(where_parts, collapse = " AND ")
-  )
+    WHERE athlete_uuid = $1 AND session_date = $2
+  ")
   
   exists_result <- tryCatch({
     DBI::dbGetQuery(pg_conn, check_sql, params = where_params)
@@ -576,14 +826,6 @@ for (i in 1:nrow(insert_df)) {
   })
   
   row_exists <- exists_result$cnt[1] > 0
-  
-  # Build column list for INSERT and UPDATE
-  all_cols <- names(insert_df)
-  # Exclude id and created_at from updates (they're auto-generated)
-  update_cols <- all_cols[!all_cols %in% c("id", "created_at")]
-  # Exclude key columns from update_cols as they are in the WHERE clause
-  key_cols_for_update_exclusion <- c("athlete_uuid", "session_date")
-  update_cols <- update_cols[!update_cols %in% key_cols_for_update_exclusion]
   
   if (row_exists) {
     # Update existing row
@@ -596,6 +838,15 @@ for (i in 1:nrow(insert_df)) {
       update_params_for_set <- c(update_params_for_set, list(row[[col]]))
       current_param_idx_for_set <- current_param_idx_for_set + 1
     }
+    
+    # WHERE clause parameters need to be numbered after SET parameters
+    num_set_params <- length(update_params_for_set)
+    where_param_1 <- num_set_params + 1
+    where_param_2 <- num_set_params + 2
+    where_parts <- c(
+      paste0("athlete_uuid = $", where_param_1),
+      paste0("session_date = $", where_param_2)
+    )
     
     # Combine SET parameters with WHERE parameters
     final_update_params <- c(update_params_for_set, where_params)
@@ -644,12 +895,22 @@ for (i in 1:nrow(insert_df)) {
         update_params_for_set <- c(update_params_for_set, list(row[[col]]))
         current_param_idx_for_set <- current_param_idx_for_set + 1
       }
+      
+      # WHERE clause parameters need to be numbered after SET parameters
+      num_set_params <- length(update_params_for_set)
+      where_param_1 <- num_set_params + 1
+      where_param_2 <- num_set_params + 2
+      fallback_where_parts <- c(
+        paste0("athlete_uuid = $", where_param_1),
+        paste0("session_date = $", where_param_2)
+      )
+      
       final_update_params <- c(update_params_for_set, where_params)
       
       update_sql <- paste0("
         UPDATE public.", pg_table_name, "
         SET ", paste(update_parts, collapse = ", "), "
-        WHERE ", paste(where_parts, collapse = " AND ")
+        WHERE ", paste(fallback_where_parts, collapse = " AND ")
       )
       
       tryCatch({

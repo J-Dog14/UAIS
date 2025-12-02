@@ -84,20 +84,33 @@ def parse_xml_file(xml_file_path: str, test_date: str) -> Dict:
     tree = ET.parse(xml_file_path)
     root_xml = tree.getroot()
     
-    # Extract required fields from XML
-    name = root_xml.find(".//Name").text
-    dob = root_xml.find(".//DOB").text
-    height = root_xml.find(".//Height").text
-    weight = root_xml.find(".//Weight").text
-    injury_history = root_xml.find(".//Injury_History").text
-    season_phase = root_xml.find(".//Season_Phase").text
-    dynomometer_score = root_xml.find(".//Dynamometer_Score_Dominant").text
-    comments = root_xml.find(".//Comments").text
+    # Helper function to safely extract text from XML element
+    def safe_get_text(xpath: str, default: Optional[str] = None) -> Optional[str]:
+        elem = root_xml.find(xpath)
+        return elem.text if elem is not None and elem.text else default
     
-    # Calculate age from DOB
-    dob_date = datetime.strptime(dob, "%Y-%m-%d")
-    today = datetime.today()
-    age = today.year - dob_date.year - ((today.month, today.day) < (dob_date.month, dob_date.day))
+    # Extract required fields from XML (handle missing fields gracefully)
+    name = safe_get_text(".//Name")
+    if not name:
+        raise ValueError("Name field is required in XML file")
+    
+    dob = safe_get_text(".//DOB")
+    height = safe_get_text(".//Height")
+    weight = safe_get_text(".//Weight")
+    injury_history = safe_get_text(".//Injury_History")
+    season_phase = safe_get_text(".//Season_Phase")
+    dynomometer_score = safe_get_text(".//Dynamometer_Score_Dominant")
+    comments = safe_get_text(".//Comments")
+    
+    # Calculate age from DOB (if available)
+    age = None
+    if dob:
+        try:
+            dob_date = datetime.strptime(dob, "%Y-%m-%d")
+            today = datetime.today()
+            age = today.year - dob_date.year - ((today.month, today.day) < (dob_date.month, dob_date.day))
+        except:
+            pass
     
     # Create data dictionary with XML data and NULL for ASCII columns
     data = {
