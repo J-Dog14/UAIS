@@ -23,6 +23,15 @@ databases:
       database: "uais_warehouse"
       user: "postgres"
       password: "Byoung15!"
+  
+  # Vercel database (master source of truth for athlete UUIDs - read-only)
+  verceldb:
+    postgres:
+      host: "localhost"
+      port: 5432
+      database: "verceldb"
+      user: "postgres"
+      password: "Byoung15!"
 
 # Source databases (scattered legacy databases to consolidate)
 # These are the existing databases you want to merge into the warehouse

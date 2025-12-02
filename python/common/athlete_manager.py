@@ -180,9 +180,83 @@ def get_app_connection():
     return conn
 
 
+def get_verceldb_connection():
+    """
+    Get connection to verceldb database (master source of truth for athlete UUIDs).
+    This is a read-only connection.
+    
+    Returns:
+        psycopg2 connection object
+    """
+    config = load_db_config()
+    verceldb_config = config['databases']['verceldb']['postgres']
+    
+    conn = psycopg2.connect(
+        host=verceldb_config['host'],
+        port=verceldb_config['port'],
+        database=verceldb_config['database'],
+        user=verceldb_config['user'],
+        password=verceldb_config['password'],
+        connect_timeout=10
+    )
+    conn.set_client_encoding('UTF8')
+    
+    return conn
+
+
+def check_verceldb_for_uuid(normalized_name: str) -> Optional[str]:
+    """
+    Check if athlete exists in verceldb User table by normalized name.
+    This is the master source of truth for athlete UUIDs (read-only).
+    
+    Args:
+        normalized_name: Normalized name to search for
+        
+    Returns:
+        UUID from verceldb if found, None otherwise
+    """
+    try:
+        conn = get_verceldb_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Query User table - try exact match first
+            query = '''
+                SELECT uuid, name
+                FROM public."User"
+                WHERE LOWER(TRIM(name)) = LOWER(%s)
+                   OR LOWER(REPLACE(name, ',', '')) = LOWER(%s)
+            '''
+            
+            cur.execute(query, (normalized_name, normalized_name.replace(',', '')))
+            result = cur.fetchone()
+            
+            if result:
+                logger.info(f"Found UUID in verceldb for {normalized_name}: {result['uuid']}")
+                conn.close()
+                return str(result['uuid'])
+            
+            # Try fuzzy match - normalize all names in User table
+            cur.execute('SELECT uuid, name FROM public."User"')
+            all_users = cur.fetchall()
+            
+            for user in all_users:
+                user_normalized = normalize_name_for_matching(user['name'])
+                if user_normalized == normalized_name:
+                    logger.info(f"Found UUID in verceldb (fuzzy match) for {normalized_name}: {user['uuid']}")
+                    conn.close()
+                    return str(user['uuid'])
+        
+        conn.close()
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Error checking verceldb: {e}")
+        return None
+
+
 def check_app_db_for_uuid(normalized_name: str) -> Optional[str]:
     """
     Check if athlete exists in app database User table by normalized name.
+    DEPRECATED: Use check_verceldb_for_uuid() instead.
     
     Args:
         normalized_name: Normalized name to search for
@@ -341,8 +415,15 @@ def create_athlete_in_warehouse(
                 f"Use get_or_create_athlete() instead of create_athlete_in_warehouse()."
             )
         
+        # Check verceldb first (master source of truth)
         if athlete_uuid is None:
-            athlete_uuid = str(uuid.uuid4())
+            verceldb_uuid = check_verceldb_for_uuid(normalized_name)
+            if verceldb_uuid:
+                athlete_uuid = verceldb_uuid
+                logger.info(f"Using UUID from verceldb for {name}: {athlete_uuid}")
+            else:
+                athlete_uuid = str(uuid.uuid4())
+                logger.info(f"Generated new UUID for {name}: {athlete_uuid}")
         
         with conn.cursor() as cur:
             cur.execute('''
@@ -550,10 +631,10 @@ def get_or_create_athlete(
             # Athlete exists - update with any new info
             logger.info(f"Found existing athlete: {existing['name']} ({existing['athlete_uuid']})")
             
-            # Check app DB if not already synced
-            app_db_uuid = None
+            # Check verceldb if not already synced (master source of truth)
+            verceldb_uuid = None
             if check_app_db and not existing.get('app_db_uuid'):
-                app_db_uuid = check_app_db_for_uuid(normalized_name)
+                verceldb_uuid = check_verceldb_for_uuid(normalized_name)
             
             # Convert name to "First Last" format if provided
             display_name = normalize_name_for_display(name) if name else None
@@ -570,7 +651,7 @@ def get_or_create_athlete(
                 email=email,
                 phone=phone,
                 notes=notes,
-                app_db_uuid=app_db_uuid,
+                app_db_uuid=verceldb_uuid,
                 conn=conn
             )
             
@@ -579,13 +660,13 @@ def get_or_create_athlete(
         # Athlete doesn't exist - create new
         logger.info(f"Creating new athlete: {name}")
         
-        # Check app DB for UUID
-        app_db_uuid = None
+        # Check verceldb first (master source of truth)
+        verceldb_uuid = None
         if check_app_db:
-            app_db_uuid = check_app_db_for_uuid(normalized_name)
+            verceldb_uuid = check_verceldb_for_uuid(normalized_name)
         
-        # Use app DB UUID if found, otherwise generate new
-        athlete_uuid = app_db_uuid if app_db_uuid else str(uuid.uuid4())
+        # Use verceldb UUID if found, otherwise generate new
+        athlete_uuid = verceldb_uuid if verceldb_uuid else str(uuid.uuid4())
         
         # Convert name to "First Last" format (removes dates, converts Last, First to First Last)
         display_name = normalize_name_for_display(name)
@@ -606,7 +687,7 @@ def get_or_create_athlete(
             notes=notes,
             source_system=source_system,
             source_athlete_id=source_athlete_id,
-            app_db_uuid=app_db_uuid,
+            app_db_uuid=verceldb_uuid,
             conn=conn
         )
         
@@ -706,6 +787,256 @@ def update_athlete_flags(conn=None, verbose=True):
             'success': False,
             'message': str(e)
         }
+    finally:
+        if close_conn:
+            conn.close()
+
+
+def update_uuid_from_verceldb(athlete_uuid: str, normalized_name: str, conn=None) -> bool:
+    """
+    Update athlete UUID from verceldb if a match is found.
+    This is used for backfilling UUIDs for athletes that weren't in verceldb initially.
+    
+    Args:
+        athlete_uuid: Current athlete UUID in warehouse
+        normalized_name: Normalized name to search for in verceldb
+        conn: Optional database connection
+        
+    Returns:
+        True if UUID was updated, False otherwise
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_warehouse_connection()
+        close_conn = True
+    
+    try:
+        # Check verceldb for UUID
+        verceldb_uuid = check_verceldb_for_uuid(normalized_name)
+        
+        if not verceldb_uuid:
+            logger.info(f"No match found in verceldb for {normalized_name}")
+            return False
+        
+        # If UUIDs are the same, no update needed
+        if athlete_uuid == verceldb_uuid:
+            logger.info(f"UUID already matches verceldb for {normalized_name}")
+            return False
+        
+        # Update UUID in d_athletes and all f_ tables
+        logger.info(f"Updating UUID from {athlete_uuid} to {verceldb_uuid} for {normalized_name}")
+        return update_uuid_across_tables(athlete_uuid, verceldb_uuid, conn)
+        
+    finally:
+        if close_conn:
+            conn.close()
+
+
+def update_uuid_across_tables(old_uuid: str, new_uuid: str, conn=None) -> bool:
+    """
+    Update athlete UUID across all tables when UUID changes.
+    Updates d_athletes first, then all f_ tables.
+    
+    Hierarchy: verceldb/User -> uais_warehouse/d_athletes -> f_ tables
+    
+    Args:
+        old_uuid: Current athlete UUID
+        new_uuid: New athlete UUID (from verceldb)
+        conn: Optional database connection
+        
+    Returns:
+        True if update was successful, False otherwise
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_warehouse_connection()
+        close_conn = True
+    
+    try:
+        with conn.cursor() as cur:
+            # Check if new_uuid already exists in d_athletes (conflict check)
+            cur.execute('''
+                SELECT athlete_uuid, name, normalized_name
+                FROM analytics.d_athletes
+                WHERE athlete_uuid = %s
+            ''', (new_uuid,))
+            
+            existing_athlete = cur.fetchone()
+            if existing_athlete and existing_athlete[0] != old_uuid:
+                logger.error(
+                    f"Cannot update UUID: {new_uuid} already exists in d_athletes "
+                    f"for athlete '{existing_athlete[1]}' ({existing_athlete[2]}). "
+                    f"This indicates a potential data conflict that needs manual resolution."
+                )
+                return False
+            
+            # List of all f_ tables that have athlete_uuid column
+            fact_tables = [
+                'f_athletic_screen',
+                'f_athletic_screen_cmj',
+                'f_athletic_screen_dj',
+                'f_athletic_screen_slv',
+                'f_athletic_screen_nmt',
+                'f_athletic_screen_ppu',
+                'f_pro_sup',
+                'f_readiness_screen',
+                'f_readiness_screen_i',
+                'f_readiness_screen_y',
+                'f_readiness_screen_t',
+                'f_readiness_screen_ir90',
+                'f_readiness_screen_cmj',
+                'f_readiness_screen_ppu',
+                'f_mobility',
+                'f_proteus',
+                'f_kinematics_pitching',
+                'f_kinematics_hitting'
+            ]
+            
+            # First, update d_athletes
+            cur.execute('''
+                UPDATE analytics.d_athletes
+                SET athlete_uuid = %s, app_db_uuid = %s, app_db_synced_at = NOW()
+                WHERE athlete_uuid = %s
+            ''', (new_uuid, new_uuid, old_uuid))
+            
+            rows_updated_d = cur.rowcount
+            
+            if rows_updated_d == 0:
+                logger.warning(f"No athlete found with UUID {old_uuid} in d_athletes")
+                return False
+            
+            logger.info(f"Updated d_athletes: {rows_updated_d} row(s)")
+            
+            # Update all f_ tables
+            total_rows_updated = rows_updated_d
+            for table in fact_tables:
+                try:
+                    # Check if table exists and has athlete_uuid column
+                    cur.execute(f'''
+                        SELECT COUNT(*) 
+                        FROM information_schema.columns 
+                        WHERE table_schema = 'public' 
+                        AND table_name = %s 
+                        AND column_name = 'athlete_uuid'
+                    ''', (table,))
+                    
+                    if cur.fetchone()[0] == 0:
+                        logger.debug(f"Table {table} does not exist or has no athlete_uuid column, skipping")
+                        continue
+                    
+                    # Update athlete_uuid in this table
+                    cur.execute(f'''
+                        UPDATE public.{table}
+                        SET athlete_uuid = %s
+                        WHERE athlete_uuid = %s
+                    ''', (new_uuid, old_uuid))
+                    
+                    rows_updated = cur.rowcount
+                    if rows_updated > 0:
+                        logger.info(f"Updated {table}: {rows_updated} row(s)")
+                        total_rows_updated += rows_updated
+                        
+                except Exception as e:
+                    logger.warning(f"Error updating {table}: {e}")
+                    continue
+            
+            conn.commit()
+            logger.info(f"Successfully updated UUID from {old_uuid} to {new_uuid} across all tables ({total_rows_updated} total rows)")
+            return True
+            
+    except Exception as e:
+        logger.error(f"Error updating UUID across tables: {e}")
+        conn.rollback()
+        return False
+        
+    finally:
+        if close_conn:
+            conn.close()
+
+
+def backfill_uuids_from_verceldb(conn=None, dry_run: bool = False) -> Dict[str, Any]:
+    """
+    Backfill UUIDs from verceldb for all athletes in warehouse that don't have app_db_uuid set.
+    This function checks verceldb for name matches and updates UUIDs if found.
+    
+    Args:
+        conn: Optional database connection
+        dry_run: If True, only reports what would be updated without making changes
+        
+    Returns:
+        Dictionary with summary statistics
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_warehouse_connection()
+        close_conn = True
+    
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Get all athletes without app_db_uuid
+            cur.execute('''
+                SELECT athlete_uuid, name, normalized_name
+                FROM analytics.d_athletes
+                WHERE app_db_uuid IS NULL
+                ORDER BY created_at
+            ''')
+            
+            athletes_to_check = cur.fetchall()
+            
+            logger.info(f"Found {len(athletes_to_check)} athletes without app_db_uuid to check")
+            
+            updated_count = 0
+            matched_count = 0
+            not_found_count = 0
+            errors = []
+            
+            for athlete in athletes_to_check:
+                athlete_uuid = athlete['athlete_uuid']
+                normalized_name = athlete['normalized_name']
+                name = athlete['name']
+                
+                # Check verceldb for match
+                verceldb_uuid = check_verceldb_for_uuid(normalized_name)
+                
+                if verceldb_uuid:
+                    matched_count += 1
+                    logger.info(f"Found match in verceldb for {name}: {verceldb_uuid}")
+                    
+                    if not dry_run:
+                        # Update UUID across all tables
+                        if update_uuid_across_tables(athlete_uuid, verceldb_uuid, conn):
+                            updated_count += 1
+                        else:
+                            errors.append(f"Failed to update {name} ({athlete_uuid})")
+                    else:
+                        logger.info(f"[DRY RUN] Would update {name} from {athlete_uuid} to {verceldb_uuid}")
+                        updated_count += 1
+                else:
+                    not_found_count += 1
+                    logger.debug(f"No match in verceldb for {name}")
+            
+            result = {
+                'total_checked': len(athletes_to_check),
+                'matched_in_verceldb': matched_count,
+                'updated': updated_count,
+                'not_found': not_found_count,
+                'errors': errors,
+                'dry_run': dry_run
+            }
+            
+            logger.info("=" * 80)
+            logger.info("UUID BACKFILL SUMMARY")
+            logger.info("=" * 80)
+            logger.info(f"Total athletes checked: {result['total_checked']}")
+            logger.info(f"Matched in verceldb: {result['matched_in_verceldb']}")
+            logger.info(f"Updated: {result['updated']}")
+            logger.info(f"Not found in verceldb: {result['not_found']}")
+            if errors:
+                logger.warning(f"Errors: {len(errors)}")
+            logger.info("=" * 80)
+            
+            return result
+            
     finally:
         if close_conn:
             conn.close()
