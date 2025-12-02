@@ -215,6 +215,89 @@ table_mapping <- list(
 # Main readiness screen table (for athlete flags)
 main_table <- "f_readiness_screen"
 
+# Function to create table if it doesn't exist
+create_table_if_not_exists <- function(pg_conn, table_name) {
+  log_progress("  Ensuring PostgreSQL table exists:", table_name)
+  
+  if (table_name %in% c("f_readiness_screen_i", "f_readiness_screen_y", "f_readiness_screen_t", "f_readiness_screen_ir90")) {
+    # Isometric test tables (I, Y, T, IR90)
+    create_table_sql <- paste0("
+      CREATE TABLE IF NOT EXISTS public.", table_name, " (
+        id SERIAL PRIMARY KEY,
+        athlete_uuid VARCHAR(36) NOT NULL,
+        session_date DATE NOT NULL,
+        source_system VARCHAR(50) NOT NULL DEFAULT 'readiness_screen',
+        source_athlete_id VARCHAR(100),
+        trial_id INTEGER,
+        age_at_collection DECIMAL,
+        age_group TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        avg_force DECIMAL,
+        avg_force_norm DECIMAL,
+        max_force DECIMAL,
+        max_force_norm DECIMAL,
+        time_to_max DECIMAL
+      )
+    ")
+  } else if (table_name %in% c("f_readiness_screen_cmj", "f_readiness_screen_ppu")) {
+    # Jump test tables (CMJ, PPU)
+    create_table_sql <- paste0("
+      CREATE TABLE IF NOT EXISTS public.", table_name, " (
+        id SERIAL PRIMARY KEY,
+        athlete_uuid VARCHAR(36) NOT NULL,
+        session_date DATE NOT NULL,
+        source_system VARCHAR(50) NOT NULL DEFAULT 'readiness_screen',
+        source_athlete_id VARCHAR(100),
+        trial_id INTEGER,
+        age_at_collection DECIMAL,
+        age_group TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        jump_height DECIMAL,
+        peak_power DECIMAL,
+        peak_force DECIMAL,
+        pp_w_per_kg DECIMAL,
+        pp_forceplate DECIMAL,
+        force_at_pp DECIMAL,
+        vel_at_pp DECIMAL
+      )
+    ")
+  } else {
+    log_progress("  [WARNING] Unknown table name:", table_name)
+    return(FALSE)
+  }
+  
+  tryCatch({
+    DBI::dbExecute(pg_conn, create_table_sql)
+    log_progress("  Table created or already exists:", table_name)
+    return(TRUE)
+  }, error = function(e) {
+    log_progress("  [WARNING] Could not create table ", table_name, ":", conditionMessage(e))
+    return(FALSE)
+  })
+}
+
+# Create main readiness screen table if it doesn't exist
+log_progress("Ensuring main readiness screen table exists...")
+create_main_table_sql <- paste0("
+  CREATE TABLE IF NOT EXISTS public.", main_table, " (
+    athlete_uuid VARCHAR(36) NOT NULL,
+    session_date DATE NOT NULL,
+    source_system VARCHAR(50) NOT NULL DEFAULT 'readiness_screen',
+    source_athlete_id VARCHAR(100),
+    age_at_collection DECIMAL,
+    age_group TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (athlete_uuid, session_date)
+  )
+")
+
+tryCatch({
+  DBI::dbExecute(pg_conn, create_main_table_sql)
+  log_progress("Main table created or already exists")
+}, error = function(e) {
+  log_progress("  [WARNING] Could not create main table:", conditionMessage(e))
+})
+
 total_inserted <- 0
 total_skipped <- 0
 total_rows_read <- 0
@@ -228,6 +311,10 @@ for (table_name in names(table_mapping)) {
   }
   
   log_progress("\nProcessing table:", table_name, "->", table_mapping[[table_name]])
+  
+  # Create PostgreSQL table if it doesn't exist
+  pg_table_name <- table_mapping[[table_name]]
+  create_table_if_not_exists(pg_conn, pg_table_name)
   
   # Read data from SQLite - join with Participant table to get athlete name
   log_progress("  Reading data from SQLite...")
@@ -405,41 +492,63 @@ for (table_name in names(table_mapping)) {
   parse_creation_date <- function(date_val) {
     if (is.na(date_val) || date_val == "") return(NA)
     
+    # If it's already a Date object, return it
+    if (inherits(date_val, "Date")) {
+      return(date_val)
+    }
+    
     # Convert to character if needed
     date_str <- as.character(date_val)
     
-    # First, check if it's a numeric value (Excel serial date)
+    # First, try parsing as date string (YYYY-MM-DD format is most common)
+    # This should be tried BEFORE Excel serial date conversion
+    formats <- c("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y")
+    for (fmt in formats) {
+      tryCatch({
+        date_obj <- as.Date(date_str, format = fmt)
+        if (!is.na(date_obj) && date_obj > as.Date("2000-01-01") && date_obj < as.Date("2100-01-01")) {
+          return(date_obj)
+        }
+      }, error = function(e) NULL)
+    }
+    
+    # If string parsing failed, check if it's a numeric value (Excel serial date)
+    # Only treat as Excel serial if it's clearly a serial number
     if (grepl("^\\d+$", date_str)) {
       serial_num <- as.numeric(date_str)
-      # Excel serial dates: days since 1900-01-01 (but Excel incorrectly treats 1900 as leap year)
-      # For dates >= 60, we subtract 2 to account for the leap year error
-      # More accurately: use origin "1899-12-30" and subtract 1
-      if (serial_num >= 1 && serial_num < 1000000) {
+      # Excel serial dates: days since 1900-01-01
+      # Valid Excel serial dates are typically > 1 and < 100000 (covers dates up to ~2174)
+      # But dates like 20342 would be around 1955, which is wrong for 2025 dates
+      # So we need to check: if the number is > 40000, it's likely a date after 2009
+      # Excel serial for 2000-01-01 is 36526, for 2025-01-01 is around 45658
+      if (serial_num >= 1 && serial_num < 100000) {
         tryCatch({
           # Excel dates: serial number represents days since 1900-01-01
           # Excel incorrectly counts 1900 as leap year, so we adjust
           date_obj <- as.Date(serial_num - 1, origin = "1899-12-30")
-          if (!is.na(date_obj) && date_obj > as.Date("1900-01-01") && date_obj < as.Date("2100-01-01")) {
+          # Check if the date is in the wrong century (1955 instead of 2025)
+          # If the date is before 2000 but the serial number suggests it should be later,
+          # add an offset of 25316 days (approximately 70 years) to correct it
+          if (!is.na(date_obj) && date_obj < as.Date("2000-01-01") && serial_num > 20000 && serial_num < 50000) {
+            # This is likely a date that was incorrectly converted (e.g., 20342 -> 1955 instead of 2025)
+            # Add offset to get the correct year
+            date_obj <- date_obj + 25316  # ~70 years offset
+          }
+          # Only accept if it's a reasonable date (after 2000)
+          if (!is.na(date_obj) && date_obj > as.Date("2000-01-01") && date_obj < as.Date("2100-01-01")) {
             return(date_obj)
           }
         }, error = function(e) NULL)
       }
     }
     
-    # Try various date string formats
-    formats <- c("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y")
-    for (fmt in formats) {
-      tryCatch({
-        date_obj <- as.Date(date_str, format = fmt)
-        if (!is.na(date_obj)) return(date_obj)
-      }, error = function(e) NULL)
-    }
-    
     # If all fail, try as.Date with default parsing
     tryCatch({
       date_obj <- as.Date(date_str)
-      if (!is.na(date_obj)) return(date_obj)
-    }, error = function(e) NA)
+      if (!is.na(date_obj) && date_obj > as.Date("2000-01-01") && date_obj < as.Date("2100-01-01")) {
+        return(date_obj)
+      }
+    }, error = function(e) NULL)
     
     return(NA)
   }

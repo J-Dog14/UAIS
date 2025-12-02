@@ -33,7 +33,7 @@ MOVEMENT_TO_PG_TABLE = {
 
 
 def _safe_convert_to_python_type(val):
-    """
+    """ 
     Safely convert any value to Python native type for PostgreSQL.
     Handles numpy types, NaN, infinity, and None.
     """
