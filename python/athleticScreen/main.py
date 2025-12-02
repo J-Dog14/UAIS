@@ -5,6 +5,7 @@ Uses athlete matching logic to prevent duplicates and update existing records.
 """
 import os
 import sys
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import List, Tuple
@@ -19,6 +20,7 @@ from common.config import get_raw_paths
 from common.athlete_manager import get_warehouse_connection
 from common.athlete_matcher import get_or_create_athlete_safe, update_athlete_data_flag
 from file_parsers import parse_movement_file
+from power_analysis import load_power_txt, analyze_power_curve_advanced
 
 # Map movement types to PostgreSQL table names
 MOVEMENT_TO_PG_TABLE = {
@@ -28,6 +30,41 @@ MOVEMENT_TO_PG_TABLE = {
     'SLV': 'f_athletic_screen_slv',
     'NMT': 'f_athletic_screen_nmt'
 }
+
+
+def _safe_convert_to_python_type(val):
+    """
+    Safely convert any value to Python native type for PostgreSQL.
+    Handles numpy types, NaN, infinity, and None.
+    """
+    if val is None:
+        return None
+    
+    try:
+        # If it has 'item' method, it's a numpy scalar - convert it
+        if hasattr(val, 'item'):
+            val = val.item()
+        
+        # Check if it's still a numpy type by type name
+        type_name = str(type(val))
+        if 'numpy' in type_name or 'np.' in type_name:
+            # Force conversion to Python float
+            val = float(val)
+        
+        # Convert to appropriate Python type
+        if isinstance(val, (int, float)):
+            # Check for NaN or infinity
+            if val != val or val == float('inf') or val == float('-inf'):
+                return None
+            return float(val) if isinstance(val, float) else int(val)
+        
+        if isinstance(val, str):
+            return val
+        
+        # Try to convert to float
+        return float(val)
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def calculate_age_group(session_date, dob_date):
@@ -86,7 +123,7 @@ def process_txt_files(folder_path: str):
         if file_name.endswith('_Power.txt'):
             # Power files handled separately (if needed)
             continue
-        
+
         file_path = os.path.join(folder_path, file_name)
         txt_files.append(file_path)
     
@@ -105,9 +142,16 @@ def process_txt_files(folder_path: str):
     updated_count = 0
     
     for file_path in txt_files:
+        # Use a savepoint for each file so one error doesn't abort the whole transaction
+        savepoint_created = False
         try:
             file_name = os.path.basename(file_path)
             print(f"\nProcessing: {file_name}")
+            
+            # Create a savepoint for this file
+            with pg_conn.cursor() as sp_cur:
+                sp_cur.execute("SAVEPOINT file_processing")
+                savepoint_created = True
             
             # Parse movement file - extracts name, date, and metrics
             parsed_data = parse_movement_file(file_path, folder_path)
@@ -185,6 +229,58 @@ def process_txt_files(folder_path: str):
                 errors.append(f"{file_path}: Unknown movement type {movement_type}")
                 continue
             
+            # Try to load and analyze power file if it exists
+            power_metrics = {}
+            trial_name = parsed_data.get('trial_name')
+            if trial_name and movement_type in {'CMJ', 'DJ', 'PPU', 'SLV'}:
+                # Look for Power.txt file - trial_name is the filename without extension
+                # So if file is "CMJ1.txt", trial_name is "CMJ1", power file is "CMJ1_Power.txt"
+                power_file = os.path.join(folder_path, f"{trial_name}_Power.txt")
+                
+                if not os.path.exists(power_file):
+                    # Try alternative patterns
+                    alt_patterns = [
+                        os.path.join(folder_path, f"{file_name.replace('.txt', '_Power.txt')}"),
+                        os.path.join(folder_path, f"{movement_type}_Power.txt"),
+                    ]
+                    for pattern in alt_patterns:
+                        if os.path.exists(pattern):
+                            power_file = pattern
+                            break
+                    else:
+                        power_file = None
+                
+                if power_file and os.path.exists(power_file):
+                    try:
+                        power_data = load_power_txt(power_file)
+                        power_analysis = analyze_power_curve_advanced(power_data, fs_hz=1000.0)
+                        
+                        # Map analysis results to database columns, converting numpy types
+                        power_metrics = {
+                            'peak_power_w': _safe_convert_to_python_type(power_analysis.get('peak_power_w')),
+                            'time_to_peak_s': _safe_convert_to_python_type(power_analysis.get('time_to_peak_s')),
+                            'rpd_max_w_per_s': _safe_convert_to_python_type(power_analysis.get('rpd_max_w_per_s')),
+                            'time_to_rpd_max_s': _safe_convert_to_python_type(power_analysis.get('time_to_rpd_max_s')),
+                            'rise_time_10_90_s': _safe_convert_to_python_type(power_analysis.get('rise_time_10_90_s')),
+                            'fwhm_s': _safe_convert_to_python_type(power_analysis.get('fwhm_s')),
+                            'auc_j': _safe_convert_to_python_type(power_analysis.get('auc_j')),
+                            'work_early_pct': _safe_convert_to_python_type(power_analysis.get('work_early_pct')),
+                            'decay_90_10_s': _safe_convert_to_python_type(power_analysis.get('decay_90_10_s')),
+                            't_com_norm_0to1': _safe_convert_to_python_type(power_analysis.get('t_com_norm_0to1')),
+                            'skewness': _safe_convert_to_python_type(power_analysis.get('skewness')),
+                            'kurtosis': _safe_convert_to_python_type(power_analysis.get('kurtosis')),
+                            'spectral_centroid_hz': _safe_convert_to_python_type(power_analysis.get('spectral_centroid_hz')),
+                        }
+                        print(f"   ✓ Loaded power analysis from {os.path.basename(power_file)}")
+                    except Exception as e:
+                        print(f"   Warning: Could not analyze power file {os.path.basename(power_file)}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        # Continue without power metrics
+                else:
+                    # No power file found - this is okay, just skip power metrics
+                    pass
+            
             # Prepare data for insertion based on movement type
             if movement_type in {'CMJ', 'PPU'}:
                 insert_data = {
@@ -193,17 +289,21 @@ def process_txt_files(folder_path: str):
                     'source_system': 'athletic_screen',
                     'source_athlete_id': name,
                     'trial_name': parsed_data.get('trial_name'),
-                    'age_at_collection': age_at_collection,
+                    'age_at_collection': _safe_convert_to_python_type(age_at_collection),
                     'age_group': age_group,
-                    'jh_in': parsed_data.get('JH_IN'),
-                    'peak_power': parsed_data.get('Peak_Power'),
-                    'pp_forceplate': parsed_data.get('PP_FORCEPLATE'),
-                    'force_at_pp': parsed_data.get('Force_at_PP'),
-                    'vel_at_pp': parsed_data.get('Vel_at_PP'),
-                    'pp_w_per_kg': parsed_data.get('PP_W_per_kg')
+                    'jh_in': _safe_convert_to_python_type(parsed_data.get('JH_IN')),
+                    'peak_power': _safe_convert_to_python_type(parsed_data.get('Peak_Power')),
+                    'pp_forceplate': _safe_convert_to_python_type(parsed_data.get('PP_FORCEPLATE')),
+                    'force_at_pp': _safe_convert_to_python_type(parsed_data.get('Force_at_PP')),
+                    'vel_at_pp': _safe_convert_to_python_type(parsed_data.get('Vel_at_PP')),
+                    'pp_w_per_kg': _safe_convert_to_python_type(parsed_data.get('PP_W_per_kg'))
                 }
+                # Add power analysis metrics
+                insert_data.update(power_metrics)
                 update_cols = ['jh_in', 'peak_power', 'pp_forceplate', 'force_at_pp', 
                               'vel_at_pp', 'pp_w_per_kg', 'age_at_collection', 'age_group']
+                # Add power metric columns to update list
+                update_cols.extend([k for k in power_metrics.keys() if k not in update_cols])
             
             elif movement_type == 'DJ':
                 insert_data = {
@@ -212,18 +312,22 @@ def process_txt_files(folder_path: str):
                     'source_system': 'athletic_screen',
                     'source_athlete_id': name,
                     'trial_name': parsed_data.get('trial_name'),
-                    'age_at_collection': age_at_collection,
+                    'age_at_collection': _safe_convert_to_python_type(age_at_collection),
                     'age_group': age_group,
-                    'jh_in': parsed_data.get('JH_IN'),
-                    'pp_forceplate': parsed_data.get('PP_FORCEPLATE'),
-                    'force_at_pp': parsed_data.get('Force_at_PP'),
-                    'vel_at_pp': parsed_data.get('Vel_at_PP'),
-                    'pp_w_per_kg': parsed_data.get('PP_W_per_kg'),
-                    'ct': parsed_data.get('CT'),
-                    'rsi': parsed_data.get('RSI')
+                    'jh_in': _safe_convert_to_python_type(parsed_data.get('JH_IN')),
+                    'pp_forceplate': _safe_convert_to_python_type(parsed_data.get('PP_FORCEPLATE')),
+                    'force_at_pp': _safe_convert_to_python_type(parsed_data.get('Force_at_PP')),
+                    'vel_at_pp': _safe_convert_to_python_type(parsed_data.get('Vel_at_PP')),
+                    'pp_w_per_kg': _safe_convert_to_python_type(parsed_data.get('PP_W_per_kg')),
+                    'ct': _safe_convert_to_python_type(parsed_data.get('CT')),
+                    'rsi': _safe_convert_to_python_type(parsed_data.get('RSI'))
                 }
+                # Add power analysis metrics
+                insert_data.update(power_metrics)
                 update_cols = ['jh_in', 'pp_forceplate', 'force_at_pp', 'vel_at_pp', 
                               'pp_w_per_kg', 'ct', 'rsi', 'age_at_collection', 'age_group']
+                # Add power metric columns to update list
+                update_cols.extend([k for k in power_metrics.keys() if k not in update_cols])
             
             elif movement_type == 'SLV':
                 insert_data = {
@@ -233,16 +337,20 @@ def process_txt_files(folder_path: str):
                     'source_athlete_id': name,
                     'trial_name': parsed_data.get('trial_name'),
                     'side': parsed_data.get('side'),
-                    'age_at_collection': age_at_collection,
+                    'age_at_collection': _safe_convert_to_python_type(age_at_collection),
                     'age_group': age_group,
-                    'jh_in': parsed_data.get('JH_IN'),
-                    'pp_forceplate': parsed_data.get('PP_FORCEPLATE'),
-                    'force_at_pp': parsed_data.get('Force_at_PP'),
-                    'vel_at_pp': parsed_data.get('Vel_at_PP'),
-                    'pp_w_per_kg': parsed_data.get('PP_W_per_kg')
+                    'jh_in': _safe_convert_to_python_type(parsed_data.get('JH_IN')),
+                    'pp_forceplate': _safe_convert_to_python_type(parsed_data.get('PP_FORCEPLATE')),
+                    'force_at_pp': _safe_convert_to_python_type(parsed_data.get('Force_at_PP')),
+                    'vel_at_pp': _safe_convert_to_python_type(parsed_data.get('Vel_at_PP')),
+                    'pp_w_per_kg': _safe_convert_to_python_type(parsed_data.get('PP_W_per_kg'))
                 }
+                # Add power analysis metrics
+                insert_data.update(power_metrics)
                 update_cols = ['jh_in', 'pp_forceplate', 'force_at_pp', 'vel_at_pp', 
                               'pp_w_per_kg', 'age_at_collection', 'age_group']
+                # Add power metric columns to update list
+                update_cols.extend([k for k in power_metrics.keys() if k not in update_cols])
             
             elif movement_type == 'NMT':
                 insert_data = {
@@ -251,15 +359,20 @@ def process_txt_files(folder_path: str):
                     'source_system': 'athletic_screen',
                     'source_athlete_id': name,
                     'trial_name': parsed_data.get('trial_name'),
-                    'age_at_collection': age_at_collection,
+                    'age_at_collection': _safe_convert_to_python_type(age_at_collection),
                     'age_group': age_group,
-                    'num_taps_10s': parsed_data.get('NUM_TAPS_10s'),
-                    'num_taps_20s': parsed_data.get('NUM_TAPS_20s'),
-                    'num_taps_30s': parsed_data.get('NUM_TAPS_30s'),
-                    'num_taps': parsed_data.get('NUM_TAPS')
+                    'num_taps_10s': _safe_convert_to_python_type(parsed_data.get('NUM_TAPS_10s')),
+                    'num_taps_20s': _safe_convert_to_python_type(parsed_data.get('NUM_TAPS_20s')),
+                    'num_taps_30s': _safe_convert_to_python_type(parsed_data.get('NUM_TAPS_30s')),
+                    'num_taps': _safe_convert_to_python_type(parsed_data.get('NUM_TAPS'))
                 }
                 update_cols = ['num_taps_10s', 'num_taps_20s', 'num_taps_30s', 'num_taps',
                               'age_at_collection', 'age_group']
+            else:
+                # Unknown movement type - should not reach here if pg_table check worked
+                print(f"   Warning: Unhandled movement type {movement_type}")
+                errors.append(f"{file_path}: Unhandled movement type {movement_type}")
+                continue
             
             # UPSERT: Check if row exists, then update or insert
             with pg_conn.cursor() as cur:
@@ -284,7 +397,9 @@ def process_txt_files(folder_path: str):
                 if exists:
                     # Update existing row
                     set_parts = [f"{col} = %s" for col in update_cols]
-                    update_values = [insert_data[col] for col in update_cols]
+                    
+                    # Convert all values to Python native types (already converted, but ensure)
+                    update_values = [_safe_convert_to_python_type(insert_data[col]) for col in update_cols]
                     update_values.extend(where_params)
                     
                     cur.execute(f"""
@@ -299,7 +414,9 @@ def process_txt_files(folder_path: str):
                     cols = list(insert_data.keys())
                     placeholders = ', '.join(['%s'] * len(cols))
                     col_names = ', '.join(cols)
-                    values = [insert_data[col] for col in cols]
+                    
+                    # Convert all values to Python native types (already converted, but ensure)
+                    values = [_safe_convert_to_python_type(insert_data[col]) for col in cols]
                     
                     cur.execute(f"""
                         INSERT INTO public.{pg_table} ({col_names})
@@ -308,12 +425,107 @@ def process_txt_files(folder_path: str):
                     inserted_count += 1
                     print(f"   ✓ Inserted {movement_type} data")
                 
+                # Commit the transaction (this automatically releases all savepoints)
                 pg_conn.commit()
+                
+                # Move processed file and corresponding Power.txt file to "Processed txt Files" subdirectory
+                try:
+                    processed_dir = os.path.join(folder_path, "Processed txt Files")
+                    os.makedirs(processed_dir, exist_ok=True)
+                    
+                    # Create new filename with _NAME_DATE format
+                    # Clean name for filename (remove commas, replace spaces with underscores)
+                    clean_name = name.replace(',', '').replace(' ', '_')
+                    base_name, ext = os.path.splitext(file_name)
+                    new_filename = f"{base_name}_{clean_name}_{date_str}{ext}"
+                    dest_path = os.path.join(processed_dir, new_filename)
+                    
+                    # If file already exists in destination, add a counter
+                    counter = 1
+                    original_dest = dest_path
+                    while os.path.exists(dest_path):
+                        base_new, ext_new = os.path.splitext(new_filename)
+                        dest_path = os.path.join(processed_dir, f"{base_new}_{counter}{ext_new}")
+                        counter += 1
+                    
+                    # Move the main txt file
+                    shutil.move(file_path, dest_path)
+                    print(f"   ✓ Moved to: {os.path.basename(dest_path)}")
+                    
+                    # Also move the corresponding Power.txt file if it exists
+                    trial_name = parsed_data.get('trial_name')
+                    if trial_name and movement_type in {'CMJ', 'DJ', 'PPU', 'SLV'}:
+                        # Look for Power.txt file - try different naming patterns
+                        power_file = os.path.join(folder_path, f"{trial_name}_Power.txt")
+                        
+                        if not os.path.exists(power_file):
+                            # Try alternative patterns
+                            alt_patterns = [
+                                os.path.join(folder_path, f"{file_name.replace('.txt', '_Power.txt')}"),
+                                os.path.join(folder_path, f"{movement_type}_Power.txt"),
+                            ]
+                            for pattern in alt_patterns:
+                                if os.path.exists(pattern):
+                                    power_file = pattern
+                                    break
+                            else:
+                                power_file = None
+                        
+                        if power_file and os.path.exists(power_file):
+                            try:
+                                # Create corresponding Power.txt filename
+                                power_base_name = os.path.basename(power_file)
+                                power_base, power_ext = os.path.splitext(power_base_name)
+                                
+                                # Extract the trial name part (e.g., "CMJ1" from "CMJ1_Power.txt")
+                                if '_Power' in power_base:
+                                    trial_part = power_base.replace('_Power', '')
+                                else:
+                                    trial_part = base_name
+                                
+                                # Create new Power.txt filename matching the main file pattern
+                                new_power_filename = f"{trial_part}_{clean_name}_{date_str}_Power{power_ext}"
+                                power_dest_path = os.path.join(processed_dir, new_power_filename)
+                                
+                                # Handle duplicates
+                                power_counter = 1
+                                while os.path.exists(power_dest_path):
+                                    base_power_new, ext_power_new = os.path.splitext(new_power_filename)
+                                    power_dest_path = os.path.join(processed_dir, f"{base_power_new}_{power_counter}{ext_power_new}")
+                                    power_counter += 1
+                                
+                                # Move the Power.txt file
+                                shutil.move(power_file, power_dest_path)
+                                print(f"   ✓ Moved Power file to: {os.path.basename(power_dest_path)}")
+                            except Exception as power_move_error:
+                                print(f"   Warning: Could not move Power file: {power_move_error}")
+                except Exception as move_error:
+                    print(f"   Warning: Could not move file to processed directory: {move_error}")
+                    # Continue - file processing was successful even if move failed
             
             if athlete_key not in [p[0:2] for p in processed]:
                 processed.append((name, athlete_uuid, date_str))
                 
         except Exception as e:
+            # Rollback to savepoint to allow processing of next file
+            if savepoint_created:
+                try:
+                    with pg_conn.cursor() as sp_cur:
+                        sp_cur.execute("ROLLBACK TO SAVEPOINT file_processing")
+                        sp_cur.execute("RELEASE SAVEPOINT file_processing")
+                except Exception as sp_error:
+                    # If savepoint doesn't exist or transaction is aborted, rollback entire transaction
+                    try:
+                        pg_conn.rollback()
+                    except:
+                        # If rollback fails, the connection is in a bad state - try to reset it
+                        try:
+                            # Close and reopen connection
+                            pg_conn.close()
+                            pg_conn = get_warehouse_connection()
+                        except:
+                            pass
+            
             error_msg = f"{file_path}: {str(e)}"
             errors.append(error_msg)
             print(f"   ✗ Error: {str(e)}")
@@ -332,6 +544,62 @@ def process_txt_files(folder_path: str):
         print("Athlete flags updated successfully")
     except Exception as e:
         print(f"Warning: Could not update athlete flags: {str(e)}")
+    
+    # Generate reports for all processed athletes
+    if processed:
+        print("\nGenerating reports...")
+        try:
+            from athleticScreen.create_report import generate_report
+            from common.config import get_raw_paths
+            
+            # Get output directory for reports
+            try:
+                raw_paths = get_raw_paths()
+                reports_dir = raw_paths.get('athletic_screen_reports', 
+                                           r'D:/Athletic Screen 2.0/Reports/')
+            except:
+                reports_dir = r'D:/Athletic Screen 2.0/Reports/'
+            
+            os.makedirs(reports_dir, exist_ok=True)
+            
+            # Get power files directory
+            try:
+                raw_paths = get_raw_paths()
+                power_files_dir = raw_paths.get('athletic_screen', 
+                                               r'D:/Athletic Screen 2.0/Output Files/')
+            except:
+                power_files_dir = r'D:/Athletic Screen 2.0/Output Files/'
+            
+            # Generate one report per athlete (using their most recent session date)
+            athletes_to_report = {}
+            for name, athlete_uuid, date_str in processed:
+                if athlete_uuid not in athletes_to_report:
+                    athletes_to_report[athlete_uuid] = (name, date_str)
+                else:
+                    # Use the most recent date
+                    existing_date = athletes_to_report[athlete_uuid][1]
+                    if date_str > existing_date:
+                        athletes_to_report[athlete_uuid] = (name, date_str)
+            
+            for athlete_uuid, (name, date_str) in athletes_to_report.items():
+                try:
+                    print(f"   Generating report for {name} ({date_str})...")
+                    report_path = generate_report(
+                        athlete_uuid=athlete_uuid,
+                        athlete_name=name,
+                        session_date=date_str,
+                        output_dir=reports_dir,
+                        power_files_dir=power_files_dir
+                    )
+                    print(f"   ✓ Report generated: {report_path}")
+                except Exception as e:
+                    print(f"   Warning: Could not generate report for {name}: {e}")
+                    import traceback
+                    traceback.print_exc()
+        except Exception as e:
+            print(f"Warning: Report generation failed: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Summary
     print("\n" + "=" * 60)

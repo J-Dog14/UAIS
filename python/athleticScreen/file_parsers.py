@@ -67,12 +67,13 @@ def peak_power_from_pow_file(trial_name_base: str, folder_path: str) -> Optional
         Peak power value or None if not found/empty.
     """
     power_file = os.path.join(folder_path, f"{trial_name_base}_Power.txt")
+    power_file = os.path.normpath(os.path.abspath(power_file))
     if not os.path.exists(power_file):
         return None
 
     peak = -inf
     try:
-        with open(power_file, 'r') as pf:
+        with open(power_file, 'r', encoding='utf-8', errors='ignore') as pf:
             # Skip header lines until numeric rows start
             for line in pf:
                 line = line.strip()
@@ -142,7 +143,14 @@ def parse_movement_file(file_path: str, folder_path: str) -> Optional[dict]:
         return None
     
     try:
-        with open(file_path, 'r') as f:
+        # Normalize the file path and ensure it exists
+        file_path = os.path.normpath(os.path.abspath(file_path))
+        if not os.path.exists(file_path):
+            print(f"File does not exist: {file_path}")
+            return None
+        
+        # Open with explicit encoding to handle Windows paths
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             first_line = f.readline().strip()
             name = extract_name(first_line)
             date = extract_date(first_line)
@@ -240,6 +248,10 @@ def parse_movement_file(file_path: str, folder_path: str) -> Optional[dict]:
             return result
 
     except Exception as e:
+        import traceback
         print(f"Unexpected error with file {os.path.basename(file_path)}: {e}")
+        print(f"Full file path: {file_path}")
+        print(f"File exists: {os.path.exists(file_path) if 'file_path' in locals() else 'N/A'}")
+        traceback.print_exc()
         return None
 
