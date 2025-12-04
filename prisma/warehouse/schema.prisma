@@ -45,6 +45,8 @@ model DAthletes {
   hasMobilityData       Boolean @default(false) @map("has_mobility_data")
   hasProteusData        Boolean @default(false) @map("has_proteus_data")
   hasHittingData        Boolean @default(false) @map("has_hitting_data")
+  hasArmActionData      Boolean @default(false) @map("has_arm_action_data")
+  hasCurveballTestData  Boolean @default(false) @map("has_curveball_test_data")
   
   // Session Counts (number of distinct sessions/dates in each table)
   pitchingSessionCount       Int @default(0) @map("pitching_session_count")
@@ -54,6 +56,8 @@ model DAthletes {
   mobilitySessionCount       Int @default(0) @map("mobility_session_count")
   proteusSessionCount        Int @default(0) @map("proteus_session_count")
   hittingSessionCount        Int @default(0) @map("hitting_session_count")
+  armActionSessionCount      Int @default(0) @map("arm_action_session_count")
+  curveballTestSessionCount  Int @default(0) @map("curveball_test_session_count")
   
   // Timestamps
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -78,6 +82,8 @@ model DAthletes {
   proteus           FProteus[]
   pitching          FKinematicsPitching[]
   hitting           FKinematicsHitting[]
+  armAction         FArmAction[]
+  curveballTest     FCurveballTest[]
 
   @@schema("analytics")
   @@map("d_athletes")
@@ -708,6 +714,9 @@ model FKinematicsHitting {
   sessionDate     DateTime @map("session_date") @db.Date
   sourceSystem    String   @map("source_system") @db.VarChar(50)
   sourceAthleteId String?  @map("source_athlete_id") @db.VarChar(100)
+  metricName      String   @map("metric_name") @db.Text
+  frame           Int
+  value           Decimal? @db.Decimal
   ageAtCollection Decimal? @map("age_at_collection") @db.Decimal
   ageGroup        String?  @map("age_group") @db.Text
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
@@ -719,5 +728,75 @@ model FKinematicsHitting {
   @@map("f_kinematics_hitting")
   @@index([athleteUuid], map: "idx_f_hitting_uuid")
   @@index([sessionDate], map: "idx_f_hitting_date")
+  @@index([metricName], map: "idx_f_hitting_metric")
+  @@unique([athleteUuid, sessionDate, metricName, frame], map: "idx_f_hitting_unique")
+}
+
+model FArmAction {
+  id                Int      @id @default(autoincrement())
+  athleteUuid       String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime @map("session_date") @db.Date
+  sourceSystem      String   @default("arm_action") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
+  filename          String?  @db.Text
+  movementType      String?  @map("movement_type") @db.Text
+  footContactFrame  Int?     @map("foot_contact_frame")
+  releaseFrame      Int?     @map("release_frame")
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // Arm Action Metrics
+  armAbductionAtFootplant Decimal? @map("arm_abduction_at_footplant") @db.Decimal
+  maxAbduction            Decimal? @map("max_abduction") @db.Decimal
+  shoulderAngleAtFootplant Decimal? @map("shoulder_angle_at_footplant") @db.Decimal
+  maxER                   Decimal? @map("max_er") @db.Decimal
+  armVelo                 Decimal? @map("arm_velo") @db.Decimal
+  maxTorsoRotVelo         Decimal? @map("max_torso_rot_velo") @db.Decimal
+  torsoAngleAtFootplant   Decimal? @map("torso_angle_at_footplant") @db.Decimal
+  score                   Decimal? @db.Decimal
+  
+  // Relation
+  athlete                 DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_arm_action")
+  @@index([athleteUuid], map: "idx_f_arm_action_uuid")
+  @@index([sessionDate], map: "idx_f_arm_action_date")
+  @@index([movementType], map: "idx_f_arm_action_movement_type")
+}
+
+// NOTE: This model represents only the main columns of f_curveball_test.
+// The actual table has 306 additional columns for angle/accel data (x_neg20 through az_pos30).
+// See sql/create_curveball_test_table.sql for the complete table structure.
+// Prisma cannot efficiently model 300+ columns, so we use raw SQL for full table operations.
+model FCurveballTest {
+  id                Int      @id @default(autoincrement())
+  athleteUuid       String   @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime @map("session_date") @db.Date
+  sourceSystem      String   @default("curveball_test") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?  @map("source_athlete_id") @db.VarChar(100)
+  filename          String?  @db.Text
+  pitchType         String?  @map("pitch_type") @db.Text
+  footContactFrame  Int?     @map("foot_contact_frame")
+  releaseFrame      Int?     @map("release_frame")
+  pitchStabilityScore Decimal? @map("pitch_stability_score") @db.Decimal
+  ageAtCollection   Decimal? @map("age_at_collection") @db.Decimal
+  ageGroup          String?  @map("age_group") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp
+  
+  // NOTE: The actual table has 306 additional columns: x_neg20, y_neg20, z_neg20, ax_neg20, ay_neg20, az_neg20,
+  // ... through x_pos30, y_pos30, z_pos30, ax_pos30, ay_pos30, az_pos30
+  // These are not modeled in Prisma due to the large number, but are created via SQL migration.
+  // Use raw SQL queries to access these columns.
+  
+  // Relation
+  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+  @@map("f_curveball_test")
+  @@index([athleteUuid], map: "idx_f_curveball_test_uuid")
+  @@index([sessionDate], map: "idx_f_curveball_test_date")
+  @@index([pitchType], map: "idx_f_curveball_test_pitch_type")
 }
 
