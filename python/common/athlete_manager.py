@@ -19,6 +19,7 @@ Usage:
         source_athlete_id="RW-001"
     )
 """
+# Run mass check with   python python/common/athlete_manager.py --backfill-uuids --dry-run
 
 import os
 import sys
@@ -362,8 +363,8 @@ def create_athlete_in_warehouse(
     gender: Optional[str] = None,
     height: Optional[float] = None,
     weight: Optional[float] = None,
-    email: Optional[str] = None,
-    phone: Optional[str] = None,
+    email: Optional[str] = None,  # Not stored in d_athletes, kept for API compatibility
+    phone: Optional[str] = None,  # Not stored in d_athletes, kept for API compatibility
     notes: Optional[str] = None,
     source_system: Optional[str] = None,
     source_athlete_id: Optional[str] = None,
@@ -430,15 +431,15 @@ def create_athlete_in_warehouse(
                 INSERT INTO analytics.d_athletes (
                     athlete_uuid, name, normalized_name,
                     date_of_birth, age, age_at_collection,
-                    gender, height, weight, email, phone, notes,
+                    gender, height, weight, notes,
                     source_system, source_athlete_id, app_db_uuid, app_db_synced_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
                 )
             ''', (
                 athlete_uuid, name, normalized_name,
                 date_of_birth, age, age_at_collection,
-                gender, height, weight, email, phone, notes,
+                gender, height, weight, notes,
                 source_system, source_athlete_id, app_db_uuid
             ))
             
@@ -474,8 +475,8 @@ def update_athlete_in_warehouse(
     gender: Optional[str] = None,
     height: Optional[float] = None,
     weight: Optional[float] = None,
-    email: Optional[str] = None,
-    phone: Optional[str] = None,
+    email: Optional[str] = None,  # Not stored in d_athletes, kept for API compatibility
+    phone: Optional[str] = None,  # Not stored in d_athletes, kept for API compatibility
     notes: Optional[str] = None,
     app_db_uuid: Optional[str] = None,
     conn=None
@@ -535,13 +536,8 @@ def update_athlete_in_warehouse(
             updates.append("weight = COALESCE(weight, %s)")
             params.append(weight)
         
-        if email is not None:
-            updates.append("email = COALESCE(email, %s)")
-            params.append(email)
-        
-        if phone is not None:
-            updates.append("phone = COALESCE(phone, %s)")
-            params.append(phone)
+        # Note: email and phone are not stored in d_athletes table
+        # They are accepted for API compatibility but ignored
         
         if notes is not None:
             updates.append("notes = COALESCE(notes, %s)")
@@ -577,8 +573,8 @@ def get_or_create_athlete(
     gender: Optional[str] = None,
     height: Optional[float] = None,
     weight: Optional[float] = None,
-    email: Optional[str] = None,
-    phone: Optional[str] = None,
+    email: Optional[str] = None,  # Not stored in d_athletes, kept for API compatibility
+    phone: Optional[str] = None,  # Not stored in d_athletes, kept for API compatibility
     notes: Optional[str] = None,
     source_system: Optional[str] = None,
     source_athlete_id: Optional[str] = None,
@@ -590,12 +586,12 @@ def get_or_create_athlete(
     This is the main function to use in ETL scripts.
     
     Flow:
-    1. Normalize name
+    1. Clean and normalize name (removes dates, handles comma format, removes numbers/initials)
     2. Check warehouse for existing athlete by normalized name
     3. If found, update with any new info (non-destructive)
-    4. If not found, check app database for UUID
-    5. If found in app DB, use that UUID; otherwise generate new
-    6. Create athlete in warehouse
+    4. If not found, check verceldb for UUID
+    5. If found in verceldb, use that UUID; otherwise generate new
+    6. Create athlete in warehouse with cleaned name
     7. Return UUID
     
     Args:
@@ -616,7 +612,16 @@ def get_or_create_athlete(
     Returns:
         athlete_uuid (string)
     """
-    normalized_name = normalize_name_for_matching(name)
+    # Clean and normalize name using cleanup module (removes dates, initials, etc.)
+    try:
+        from python.common.athlete_cleanup import clean_athlete_name_for_processing
+        cleaned_display_name, normalized_name = clean_athlete_name_for_processing(name)
+        # Use cleaned display name for storage
+        name = cleaned_display_name
+    except ImportError:
+        # Fallback to original normalization if cleanup module not available
+        normalized_name = normalize_name_for_matching(name)
+        name = normalize_name_for_display(name)
     
     if not normalized_name:
         raise ValueError("Name cannot be empty after normalization")
@@ -655,6 +660,14 @@ def get_or_create_athlete(
                 conn=conn
             )
             
+            # CRITICAL: Add source_athlete_id mapping to preserve it across merges
+            if source_system and source_athlete_id:
+                try:
+                    from python.common.source_athlete_map import add_source_mapping
+                    add_source_mapping(conn, existing['athlete_uuid'], source_system, source_athlete_id)
+                except Exception as e:
+                    logger.warning(f"Failed to add source mapping: {e}")
+            
             return existing['athlete_uuid']
         
         # Athlete doesn't exist - create new
@@ -690,6 +703,14 @@ def get_or_create_athlete(
             app_db_uuid=verceldb_uuid,
             conn=conn
         )
+        
+        # CRITICAL: Add source_athlete_id mapping to preserve it across merges
+        if source_system and source_athlete_id:
+            try:
+                from python.common.source_athlete_map import add_source_mapping
+                add_source_mapping(conn, athlete_uuid, source_system, source_athlete_id)
+            except Exception as e:
+                logger.warning(f"Failed to add source mapping: {e}")
         
         return athlete_uuid
         
@@ -740,7 +761,9 @@ def update_athlete_flags(conn=None, verbose=True):
                         COUNT(*) FILTER (WHERE has_readiness_screen_data) as with_readiness,
                         COUNT(*) FILTER (WHERE has_mobility_data) as with_mobility,
                         COUNT(*) FILTER (WHERE has_proteus_data) as with_proteus,
-                        COUNT(*) FILTER (WHERE has_hitting_data) as with_hitting
+                        COUNT(*) FILTER (WHERE has_hitting_data) as with_hitting,
+                        COUNT(*) FILTER (WHERE has_arm_action_data) as with_arm_action,
+                        COUNT(*) FILTER (WHERE has_curveball_test_data) as with_curveball_test
                     FROM analytics.d_athletes
                 """)
                 
@@ -759,6 +782,8 @@ def update_athlete_flags(conn=None, verbose=True):
                 print(f"  Mobility: {stats[5]}")
                 print(f"  Proteus: {stats[6]}")
                 print(f"  Hitting: {stats[7]}")
+                print(f"  Arm Action: {stats[8]}")
+                print(f"  Curveball Test: {stats[9]}")
                 print("=" * 80)
                 
                 return {
@@ -772,7 +797,9 @@ def update_athlete_flags(conn=None, verbose=True):
                         'with_readiness': stats[4],
                         'with_mobility': stats[5],
                         'with_proteus': stats[6],
-                        'with_hitting': stats[7]
+                        'with_hitting': stats[7],
+                        'with_arm_action': stats[8],
+                        'with_curveball_test': stats[9]
                     }
                 }
             else:
@@ -889,7 +916,9 @@ def update_uuid_across_tables(old_uuid: str, new_uuid: str, conn=None) -> bool:
                 'f_mobility',
                 'f_proteus',
                 'f_kinematics_pitching',
-                'f_kinematics_hitting'
+                'f_kinematics_hitting',
+                'f_arm_action',
+                'f_curveball_test'
             ]
             
             # First, update d_athletes
@@ -1043,13 +1072,51 @@ def backfill_uuids_from_verceldb(conn=None, dry_run: bool = False) -> Dict[str, 
 
 
 if __name__ == '__main__':
-    # Test the module
-    test_uuid = get_or_create_athlete(
-        name="Weiss, Ryan 11-25",
-        date_of_birth="1996-12-10",
-        age=28,
-        source_system="pitching",
-        source_athlete_id="RW-001"
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description='Athlete Manager - Get or create athlete UUIDs'
     )
-    print(f"Test athlete UUID: {test_uuid}")
+    parser.add_argument(
+        '--backfill-uuids',
+        action='store_true',
+        help='Backfill app_db_uuid for all athletes missing it (checks verceldb for matches)'
+    )
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Dry run mode - show what would be updated without making changes (only with --backfill-uuids)'
+    )
+    
+    args = parser.parse_args()
+    
+    if args.backfill_uuids:
+        # Mass backfill mode
+        logger.info("=" * 80)
+        logger.info("UUID BACKFILL FROM VERCELDB")
+        logger.info("=" * 80)
+        if args.dry_run:
+            logger.info("DRY RUN MODE - No changes will be made")
+        logger.info("=" * 80)
+        logger.info("")
+        
+        result = backfill_uuids_from_verceldb(dry_run=args.dry_run)
+        
+        if result['errors']:
+            logger.error("\nErrors encountered:")
+            for error in result['errors']:
+                logger.error(f"  - {error}")
+        
+        if args.dry_run:
+            logger.info("\nRun without --dry-run to apply changes")
+    else:
+        # Default: Test the module with one athlete
+        test_uuid = get_or_create_athlete(
+            name="Weiss, Ryan 11-25",
+            date_of_birth="1996-12-10",
+            age=28,
+            source_system="pitching",
+            source_athlete_id="RW-001"
+        )
+        print(f"Test athlete UUID: {test_uuid}")
 

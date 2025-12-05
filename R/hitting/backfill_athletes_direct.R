@@ -417,7 +417,7 @@ for (uuid in existing_uuid_set) {
           '", uuid, "',
           '", gsub("'", "''", display_name), "',
           '", gsub("'", "''", normalized_name), "',
-          'pitching',
+          'hitting',
           NOW(), NOW()
         )
         ON CONFLICT (athlete_uuid) DO NOTHING

@@ -85,11 +85,31 @@ model DAthletes {
   armAction         FArmAction[]
   curveballTest     FCurveballTest[]
 
+  sourceMappings    DSourceAthleteMap[]
+
   @@schema("analytics")
   @@map("d_athletes")
   @@index([normalizedName], map: "idx_d_athletes_normalized_name")
   @@index([appDbUuid], map: "idx_d_athletes_app_db_uuid")
   @@index([sourceSystem, sourceAthleteId], map: "idx_d_athletes_source_system")
+}
+
+// Source Athlete Map Table
+// Stores ALL source_athlete_id values for each athlete across all source systems
+// This prevents loss of source_athlete_id mappings when merging duplicates
+model DSourceAthleteMap {
+  sourceSystem    String   @map("source_system") @db.Text
+  sourceAthleteId String   @map("source_athlete_id") @db.Text
+  athleteUuid     String   @map("athlete_uuid") @db.VarChar(36)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  athlete         DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@schema("analytics")
+  @@map("source_athlete_map")
+  @@id([sourceSystem, sourceAthleteId])
+  @@index([athleteUuid], map: "idx_source_map_uuid")
+  @@index([sourceSystem], map: "idx_source_map_system")
 }
 
 // ============================================================================

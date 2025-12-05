@@ -253,7 +253,7 @@ for (i in seq_along(session_files)) {
         log_progress("  [SUCCESS] Got/created athlete UUID for", athlete_name, ":", athlete_uuid)
       }
     }, error = function(e) {
-      error_count <- error_count + 1
+      error_count <<- error_count + 1
       if (i <= 5 || error_count <= 10) {
         log_progress("  [ERROR] Failed to get/create athlete for", athlete_name, ":", conditionMessage(e))
       }

@@ -114,6 +114,20 @@ def get_athlete_dob_map(conn) -> dict:
         return {row['athlete_uuid']: row['date_of_birth'] for row in cur.fetchall()}
 
 
+def table_has_age_columns(conn, schema: str, table: str) -> bool:
+    """Check if table has age_at_collection and age_group columns."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = %s 
+              AND table_name = %s
+              AND column_name IN ('age_at_collection', 'age_group')
+        """, (schema, table))
+        columns = cur.fetchall()
+        return len(columns) == 2
+
+
 def update_table_age_columns(conn, schema: str, table: str, dob_map: dict, dry_run: bool = False) -> Tuple[int, int]:
     """
     Update age_at_collection and age_group for a table.
@@ -123,6 +137,11 @@ def update_table_age_columns(conn, schema: str, table: str, dob_map: dict, dry_r
     """
     full_table = f"{schema}.{table}"
     logger.info(f"Processing {full_table}...")
+    
+    # Check if table has the columns
+    if not table_has_age_columns(conn, schema, table):
+        logger.warning(f"  Table {full_table} does not have age_at_collection/age_group columns - skipping")
+        return 0, 0
     
     # Get all rows that need updating
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
