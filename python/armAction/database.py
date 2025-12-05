@@ -4,6 +4,7 @@ Now integrated with warehouse database.
 """
 
 import sys
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
@@ -15,6 +16,7 @@ if str(python_dir) not in sys.path:
 
 from common.athlete_manager import get_or_create_athlete, get_warehouse_connection
 from common.athlete_manager import normalize_name_for_matching
+from common.athlete_utils import extract_source_athlete_id
 from config import CAPTURE_RATE
 from parsers import parse_events_from_aPlus, parse_aplus_kinematics, parse_file_info
 from utils import compute_score
@@ -132,11 +134,14 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str):
                 session_date = datetime.now().date()
             
             # Get or create athlete in warehouse
-            normalized_name = normalize_name_for_matching(p_name)
+            # Extract source_athlete_id (initials) from name if present
+            # e.g., "Cody Yarborough CY" -> "CY", "John Smith" -> "John Smith"
+            source_athlete_id = extract_source_athlete_id(p_name)
+            
             athlete_uuid = get_or_create_athlete(
-                name=p_name,
+                name=p_name,  # Will be cleaned by get_or_create_athlete (removes initials, dates, etc.)
                 source_system="arm_action",
-                source_athlete_id=p_name  # Use name as source ID
+                source_athlete_id=source_athlete_id  # Use extracted initials or cleaned name
             )
             
             # Pull the numeric fields from row
@@ -162,7 +167,7 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str):
                 athlete_uuid,
                 session_date,
                 "arm_action",  # source_system
-                p_name,  # source_athlete_id
+                source_athlete_id,  # source_athlete_id (initials if extracted)
                 fn,  # filename
                 m_type,  # movement_type
                 fc,  # foot_contact_frame

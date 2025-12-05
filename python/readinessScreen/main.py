@@ -13,8 +13,9 @@ if str(python_dir) not in sys.path:
     sys.path.insert(0, str(python_dir))
 
 from common.config import get_raw_paths
-from common.athlete_manager import get_warehouse_connection
-from common.athlete_matcher import get_or_create_athlete_safe, update_athlete_data_flag
+from common.athlete_manager import get_warehouse_connection, get_or_create_athlete
+from common.athlete_matcher import update_athlete_data_flag
+from common.athlete_utils import extract_source_athlete_id
 import psycopg2
 from psycopg2.extras import execute_values
 from datetime import datetime
@@ -220,18 +221,19 @@ def process_txt_files(output_path: str):
             
             print(f"   Extracted: {name} ({date_str})")
             
-            # Get or create athlete in PostgreSQL (using safe matcher)
+            # Get or create athlete in PostgreSQL (with name cleaning and source ID extraction)
             # Note: Readiness screen txt files don't contain demographic data,
             # so we only pass name and source info. Demographic data will be filled
             # from other sources if available.
             if athlete_key not in processed_athletes:
                 try:
-                    athlete_uuid = get_or_create_athlete_safe(
-                        name=name,
+                    # Extract source_athlete_id (initials if present, otherwise cleaned name)
+                    source_athlete_id = extract_source_athlete_id(name)
+                    
+                    athlete_uuid = get_or_create_athlete(
+                        name=name,  # Will be cleaned by get_or_create_athlete (removes dates, initials, etc.)
                         source_system="readiness_screen",
-                        source_athlete_id=name,
-                        # No demographic data available from txt files
-                        conn=pg_conn
+                        source_athlete_id=source_athlete_id
                     )
                     processed_athletes[athlete_key] = athlete_uuid
                     print(f"   Got/created athlete UUID: {athlete_uuid}")
@@ -284,7 +286,7 @@ def process_txt_files(output_path: str):
                     'athlete_uuid': athlete_uuid,
                     'session_date': date_str,
                     'source_system': 'readiness_screen',
-                    'source_athlete_id': name,
+                    'source_athlete_id': extract_source_athlete_id(name),
                     'age_at_collection': age_at_collection,
                     'age_group': age_group,
                     'jump_height': parsed_data.get('JH_IN'),
@@ -301,7 +303,7 @@ def process_txt_files(output_path: str):
                     'athlete_uuid': athlete_uuid,
                     'session_date': date_str,
                     'source_system': 'readiness_screen',
-                    'source_athlete_id': name,
+                    'source_athlete_id': extract_source_athlete_id(name),
                     'age_at_collection': age_at_collection,
                     'age_group': age_group,
                     'avg_force': parsed_data.get('Avg_Force'),

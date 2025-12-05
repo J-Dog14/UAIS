@@ -17,8 +17,9 @@ if str(python_dir) not in sys.path:
     sys.path.insert(0, str(python_dir))
 
 from common.config import get_raw_paths
-from common.athlete_manager import get_warehouse_connection
-from common.athlete_matcher import get_or_create_athlete_safe, update_athlete_data_flag
+from common.athlete_manager import get_warehouse_connection, get_or_create_athlete
+from common.athlete_matcher import update_athlete_data_flag
+from common.athlete_utils import extract_source_athlete_id
 from file_parsers import parse_movement_file
 from power_analysis import load_power_txt, analyze_power_curve_advanced
 
@@ -174,15 +175,16 @@ def process_txt_files(folder_path: str):
             
             print(f"   Extracted: {name} ({date_str}) - {movement_type}")
             
-            # Get or create athlete in PostgreSQL (using safe matcher)
+            # Get or create athlete in PostgreSQL (with name cleaning and source ID extraction)
             if athlete_key not in processed_athletes:
                 try:
-                    athlete_uuid = get_or_create_athlete_safe(
-                        name=name,
+                    # Extract source_athlete_id (initials if present, otherwise cleaned name)
+                    source_athlete_id = extract_source_athlete_id(name)
+                    
+                    athlete_uuid = get_or_create_athlete(
+                        name=name,  # Will be cleaned by get_or_create_athlete (removes dates, initials, etc.)
                         source_system="athletic_screen",
-                        source_athlete_id=name,
-                        # No demographic data available from txt files
-                        conn=pg_conn
+                        source_athlete_id=source_athlete_id
                     )
                     processed_athletes[athlete_key] = athlete_uuid
                     print(f"   Got/created athlete UUID: {athlete_uuid}")
@@ -287,7 +289,7 @@ def process_txt_files(folder_path: str):
                     'athlete_uuid': athlete_uuid,
                     'session_date': date_str,
                     'source_system': 'athletic_screen',
-                    'source_athlete_id': name,
+                    'source_athlete_id': extract_source_athlete_id(name),
                     'trial_name': parsed_data.get('trial_name'),
                     'age_at_collection': _safe_convert_to_python_type(age_at_collection),
                     'age_group': age_group,
@@ -310,7 +312,7 @@ def process_txt_files(folder_path: str):
                     'athlete_uuid': athlete_uuid,
                     'session_date': date_str,
                     'source_system': 'athletic_screen',
-                    'source_athlete_id': name,
+                    'source_athlete_id': extract_source_athlete_id(name),
                     'trial_name': parsed_data.get('trial_name'),
                     'age_at_collection': _safe_convert_to_python_type(age_at_collection),
                     'age_group': age_group,
@@ -334,7 +336,7 @@ def process_txt_files(folder_path: str):
                     'athlete_uuid': athlete_uuid,
                     'session_date': date_str,
                     'source_system': 'athletic_screen',
-                    'source_athlete_id': name,
+                    'source_athlete_id': extract_source_athlete_id(name),
                     'trial_name': parsed_data.get('trial_name'),
                     'side': parsed_data.get('side'),
                     'age_at_collection': _safe_convert_to_python_type(age_at_collection),
@@ -357,7 +359,7 @@ def process_txt_files(folder_path: str):
                     'athlete_uuid': athlete_uuid,
                     'session_date': date_str,
                     'source_system': 'athletic_screen',
-                    'source_athlete_id': name,
+                    'source_athlete_id': extract_source_athlete_id(name),
                     'trial_name': parsed_data.get('trial_name'),
                     'age_at_collection': _safe_convert_to_python_type(age_at_collection),
                     'age_group': age_group,

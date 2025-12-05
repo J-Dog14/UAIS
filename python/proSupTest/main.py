@@ -21,11 +21,9 @@ python_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(python_dir))
 
 from common.config import get_raw_paths, get_warehouse_engine
-from common.athlete_manager import get_warehouse_connection
-from common.athlete_matcher import (
-    get_or_create_athlete_safe,
-    update_athlete_data_flag
-)
+from common.athlete_manager import get_warehouse_connection, get_or_create_athlete
+from common.athlete_matcher import update_athlete_data_flag
+from common.athlete_utils import extract_source_athlete_id
 from common.db_utils import write_df
 from proSupTest.file_parsers import (
     select_folder_dialog,
@@ -392,15 +390,17 @@ def process_single_folder(folder_path: str):
         age = xml_data.get('age')
         
         print(f"\nGetting/creating athlete: {athlete_name}")
-        athlete_uuid = get_or_create_athlete_safe(
-            name=athlete_name,
+        # Extract source_athlete_id (initials if present, otherwise cleaned name)
+        source_athlete_id = extract_source_athlete_id(athlete_name)
+        
+        athlete_uuid = get_or_create_athlete(
+            name=athlete_name,  # Will be cleaned by get_or_create_athlete (removes dates, initials, etc.)
             source_system="pro_sup",
-            source_athlete_id=athlete_name,
+            source_athlete_id=source_athlete_id,
             date_of_birth=dob_str,
             age=age,
             height=height,
-            weight=weight,
-            conn=pg_conn
+            weight=weight
         )
         print(f"Athlete UUID: {athlete_uuid}")
         
@@ -431,7 +431,7 @@ def process_single_folder(folder_path: str):
             'athlete_uuid': athlete_uuid,
             'session_date': test_date,
             'source_system': 'pro_sup',
-            'source_athlete_id': athlete_name,
+            'source_athlete_id': source_athlete_id,  # Use extracted initials or cleaned name
             'age': age,
             'height': height,
             'weight': weight,

@@ -15,6 +15,7 @@ if str(python_dir) not in sys.path:
 
 from common.athlete_manager import get_or_create_athlete, get_warehouse_connection
 from common.athlete_manager import normalize_name_for_matching
+from common.athlete_utils import extract_source_athlete_id
 from config import LINK_MODEL_BASED_PATH, ACCEL_DATA_PATH
 from parsers import parse_events, parse_link_model_based_long, parse_accel_long
 from utils import compute_pitch_stability_score, parse_file_info
@@ -184,11 +185,13 @@ def ingest_pitches_with_events(events_dict):
                 session_date = datetime.now().date()
             
             # Get or create athlete in warehouse
-            normalized_name = normalize_name_for_matching(p_name)
+            # Extract source_athlete_id (initials if present, otherwise cleaned name)
+            source_athlete_id = extract_source_athlete_id(p_name)
+            
             athlete_uuid = get_or_create_athlete(
-                name=p_name,
+                name=p_name,  # Will be cleaned by get_or_create_athlete (removes dates, initials, etc.)
                 source_system="curveball_test",
-                source_athlete_id=p_name
+                source_athlete_id=source_athlete_id
             )
             
             # Build row_dict with all angle/accel data
@@ -248,7 +251,7 @@ def ingest_pitches_with_events(events_dict):
                 athlete_uuid,
                 session_date,
                 "curveball_test",  # source_system
-                p_name,  # source_athlete_id
+                source_athlete_id,  # source_athlete_id (initials if extracted)
                 pitch_fp,  # filename
                 pitch_type,  # pitch_type
                 int(foot_fr) if foot_fr is not None else None,  # foot_contact_frame
