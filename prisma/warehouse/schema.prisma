@@ -602,6 +602,13 @@ model FMobility {
   // Assessment Date (from column A, rows 10-54)
   assessmentDate  DateTime? @map("assessment_date") @db.Date
   
+  // File tracking and medical history
+  sourceFile      String?  @map("source_file") @db.Text
+  medicalHistory  String?  @map("medical_history") @db.Text
+  
+  // Note: Additional dynamic columns are added based on assessment metrics (A10:A54)
+  // These columns are created dynamically by the processing script
+  
   // Relation
   athlete         DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
 

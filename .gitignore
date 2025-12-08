@@ -38,3 +38,8 @@ Thumbs.db
 *.db
 *.sqlite
 *.sqlite3
+
+# Secrets and credentials
+config/client_secret_*.json
+config/token.pickle
+config/*.pickle

@@ -48,7 +48,7 @@ source_databases:
 # Update these paths to point to your actual raw data directories
 raw_data_paths:
   athletic_screen: "D:/Athletic Screen 2.0/Output Files/"
-  mobility: "path/to/mobility/raw/data/"
+  mobility: "G:/My Drive/Data/Mobility Assessments/"
   pro_sup: "D:/Pro-Sup Test/Data/"
   proteus: "path/to/proteus/raw/data/"
   hitting: "path/to/hitting/raw/data/"
