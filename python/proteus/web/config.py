@@ -126,4 +126,6 @@ def get_date_range(days: Optional[int] = None) -> tuple[date, date]:
 
 def is_headless() -> bool:
     """Check if browser should run in headless mode."""
-    return os.getenv("PROTEUS_HEADLESS", "true").lower() == "true"
+    # Default to False (show browser) for easier debugging
+    # Set PROTEUS_HEADLESS=true to run in background
+    return os.getenv("PROTEUS_HEADLESS", "false").lower() == "true"

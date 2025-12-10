@@ -16,7 +16,7 @@ A safeguard system that **interrupts** ETL processing when new athletes are dete
    - R equivalents of all Python functions
    - Same interactive prompting functionality
 
-3. **`docs/interactive-athlete-creation-guide.md`**
+3. **`docs/athlete_creation_guide.md`**
    - Complete user guide
 
 ## Files Modified

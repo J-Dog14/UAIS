@@ -628,47 +628,55 @@ model FProteus {
   ageAtCollection Decimal? @map("age_at_collection") @db.Decimal
   ageGroup        String?  @map("age_group") @db.Text
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp
+  sourceFile      String?  @map("source_file") @db.Text
+  
+  // Priority columns (at beginning as requested)
+  userName        String?  @map("user_name") @db.Text
+  birthDate       DateTime? @map("birth_date") @db.Date
+  weight          Decimal? @db.Decimal
+  height          Decimal? @db.Decimal
+  sex             String?  @db.Text
+  position        String?  @db.Text
+  movement        String?  @db.Text
   
   // Session Information
   sessionId       Int?     @map("session_id")
-  sessionCreatedAt String? @map("session_created_at") @db.Text
-  sessionName     String?  @map("session_name") @db.Text
+  sessionCreatedAt DateTime? @map("session_created_at") @db.Timestamp
   
   // Exercise Information
-  exerciseId     Int?     @map("exercise_id")
-  exerciseCreatedAt String? @map("exercise_created_at") @db.Text
-  exerciseName   String?  @map("exercise_name") @db.Text
+  exerciseId      Int?     @map("exercise_id")
+  exerciseName    String?  @map("exercise_name") @db.Text
   
   // Set Information
-  reps           Int?
-  resistance     Int?
-  setNumber      Int?     @map("set_number")
-  dominance      String?  @db.Text
-  personalRecord Boolean? @map("personal_record")
+  reps            Int?
+  resistance      Int?
+  setNumber       Int?     @map("set_number")
+  dominance       String?  @db.Text
+  personalRecord  Boolean? @map("personal_record")
   
   // Power Metrics
-  powerLow       Decimal? @map("power_low") @db.Decimal
-  powerHigh      Decimal? @map("power_high") @db.Decimal
-  powerMean      Decimal? @map("power_mean") @db.Decimal
+  powerLow        Decimal? @map("power_low") @db.Decimal
+  powerHigh       Decimal? @map("power_high") @db.Decimal
+  powerMean       Decimal? @map("power_mean") @db.Decimal
   
   // Acceleration Metrics
-  accelerationLow  Decimal? @map("acceleration_low") @db.Decimal
-  accelerationHigh Decimal? @map("acceleration_high") @db.Decimal
-  accelerationMean Decimal? @map("acceleration_mean") @db.Decimal
+  accelerationLow   Decimal? @map("acceleration_low") @db.Decimal
+  accelerationHigh  Decimal? @map("acceleration_high") @db.Decimal
+  accelerationMean  Decimal? @map("acceleration_mean") @db.Decimal
   
   // Braking Metrics
-  brakingLow     Decimal? @map("braking_low") @db.Decimal
-  brakingHigh    Decimal? @map("braking_high") @db.Decimal
-  brakingMean    Decimal? @map("braking_mean") @db.Decimal
+  brakingLow      Decimal? @map("braking_low") @db.Decimal
+  brakingHigh     Decimal? @map("braking_high") @db.Decimal
+  brakingMean     Decimal? @map("braking_mean") @db.Decimal
   
   // Deceleration Metrics
-  decelerationLow  Decimal? @map("deceleration_low") @db.Decimal
-  decelerationHigh Decimal? @map("deceleration_high") @db.Decimal
-  decelerationMean Decimal? @map("deceleration_mean") @db.Decimal
+  decelerationLow   Decimal? @map("deceleration_low") @db.Decimal
+  decelerationHigh  Decimal? @map("deceleration_high") @db.Decimal
+  decelerationMean  Decimal? @map("deceleration_mean") @db.Decimal
   
   // Explosiveness Metrics
-  explosivenessLow  Decimal? @map("explosiveness_low") @db.Decimal
-  explosivenessHigh Decimal? @map("explosiveness_high") @db.Decimal
+  explosivenessLow   Decimal? @map("explosiveness_low") @db.Decimal
+  explosivenessHigh  Decimal? @map("explosiveness_high") @db.Decimal
   explosivenessMean Decimal? @map("explosiveness_mean") @db.Decimal
   
   // Consistency Metrics
@@ -677,28 +685,17 @@ model FProteus {
   consistencyMean Decimal? @map("consistency_mean") @db.Decimal
   
   // Range of Motion Metrics
-  rangeOfMotionLow  Decimal? @map("range_of_motion_low") @db.Decimal
-  rangeOfMotionHigh Decimal? @map("range_of_motion_high") @db.Decimal
-  rangeOfMotionMean Decimal? @map("range_of_motion_mean") @db.Decimal
+  rangeOfMotionLow   Decimal? @map("range_of_motion_low") @db.Decimal
+  rangeOfMotionHigh  Decimal? @map("range_of_motion_high") @db.Decimal
+  rangeOfMotionMean  Decimal? @map("range_of_motion_mean") @db.Decimal
   
   // Velocity Metrics
   velocityLow   Decimal? @map("velocity_low") @db.Decimal
-  velocityHigh  Decimal? @map("velocity_high") @db.Decimal
-  velocityMean  Decimal? @map("velocity_mean") @db.Decimal
+  velocityHigh Decimal? @map("velocity_high") @db.Decimal
+  velocityMean Decimal? @map("velocity_mean") @db.Decimal
   
-  // Movement Information
-  movement           String? @db.Text
-  proteusAttachment String? @map("proteus_attachment") @db.Text
-  
-  // User Information (from source system)
-  userId       Int?    @map("user_id")
-  userName     String? @map("user_name") @db.Text
-  birthDate    String? @map("birth_date") @db.Text
-  weight       Int?
-  height       Int?
-  sex          String? @db.Text
-  sport        String? @db.Text
-  position     String? @db.Text
+  // Note: Additional dynamic columns from Excel will be added at runtime
+  // The processing script will dynamically add any columns not already defined here
   
   // Relation
   athlete         DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)

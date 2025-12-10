@@ -67,16 +67,69 @@ def get_app_connection_from_warehouse_config(app_db_name: Optional[str] = None):
     
     # Try to get app database name
     if app_db_name is None:
-        # First try to get from config
+        # First, try verceldb from config (most likely location for User table)
         try:
-            app_db_name = config['databases']['app']['postgres']['database']
+            verceldb_name = config['databases']['verceldb']['postgres']['database']
+            try:
+                test_conn = psycopg2.connect(
+                    host=wh_config['host'],
+                    port=wh_config['port'],
+                    database=verceldb_name,
+                    user=wh_config['user'],
+                    password=wh_config['password'],
+                    connect_timeout=5
+                )
+                # Verify User table exists
+                with test_conn.cursor() as cur:
+                    cur.execute('''
+                        SELECT 1 FROM information_schema.tables 
+                        WHERE table_schema = 'public' AND table_name = 'User'
+                    ''')
+                    if cur.fetchone():
+                        test_conn.close()
+                        app_db_name = verceldb_name
+                        logger.info(f"Using verceldb database: {verceldb_name}")
+                    else:
+                        test_conn.close()
+            except psycopg2.OperationalError:
+                pass
         except (KeyError, TypeError):
             pass
+        
+        # If verceldb didn't work, try app database from config
+        if app_db_name is None:
+            try:
+                config_db_name = config['databases']['app']['postgres']['database']
+                try:
+                    test_conn = psycopg2.connect(
+                        host=wh_config['host'],
+                        port=wh_config['port'],
+                        database=config_db_name,
+                        user=wh_config['user'],
+                        password=wh_config['password'],
+                        connect_timeout=5
+                    )
+                    # Verify User table exists
+                    with test_conn.cursor() as cur:
+                        cur.execute('''
+                            SELECT 1 FROM information_schema.tables 
+                            WHERE table_schema = 'public' AND table_name = 'User'
+                        ''')
+                        if cur.fetchone():
+                            test_conn.close()
+                            app_db_name = config_db_name
+                            logger.info(f"Using app database from config: {config_db_name}")
+                        else:
+                            test_conn.close()
+                except psycopg2.OperationalError:
+                    pass
+            except (KeyError, TypeError):
+                pass
         
         # If still None, try common names (try "vercel" first as it's most common)
         if app_db_name is None:
             # Try common database names
-            for db_name in ['vercel', 'vercel_db', 'app', 'app_db', 'local']:
+            for db_name in ['vercel', 'verceldb', 'vercel_db', 'app', 'app_db']:
                 try:
                     test_conn = psycopg2.connect(
                         host=wh_config['host'],
@@ -86,17 +139,27 @@ def get_app_connection_from_warehouse_config(app_db_name: Optional[str] = None):
                         password=wh_config['password'],
                         connect_timeout=5
                     )
-                    test_conn.close()
-                    app_db_name = db_name
-                    logger.info(f"Auto-detected app database name: {db_name}")
-                    break
+                    # Verify User table exists
+                    with test_conn.cursor() as cur:
+                        cur.execute('''
+                            SELECT 1 FROM information_schema.tables 
+                            WHERE table_schema = 'public' AND table_name = 'User'
+                        ''')
+                        if cur.fetchone():
+                            test_conn.close()
+                            app_db_name = db_name
+                            logger.info(f"Auto-detected app database name: {db_name}")
+                            break
+                        else:
+                            test_conn.close()
                 except psycopg2.OperationalError:
                     continue
         
         if app_db_name is None:
             raise ValueError(
                 "Could not determine app database name. "
-                "Please specify with --app-db-name or update config file."
+                "Please specify with --app-db-name or update config file. "
+                "Make sure the database exists and contains a 'User' table."
             )
     
     logger.info(f"Connecting to app database: {wh_config['user']}@{wh_config['host']}:{wh_config['port']}/{app_db_name}")

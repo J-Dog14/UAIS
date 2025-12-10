@@ -10,7 +10,14 @@ if not defined PROTEUS_EMAIL set PROTEUS_EMAIL=jimmy@8ctanebaseball.com
 if not defined PROTEUS_PASSWORD set PROTEUS_PASSWORD=DerekCarr4
 if not defined PROTEUS_LOCATION set PROTEUS_LOCATION=byoungphysicaltherapy
 
+REM Log start time
+echo %date% %time% - Proteus processing started >> python\proteus\daily_run.log
+
 python python\proteus\main.py
 
-REM Log the run
-echo %date% %time% - Proteus processing completed >> python\proteus\daily_run.log
+REM Log completion time and exit code
+if %ERRORLEVEL% EQU 0 (
+    echo %date% %time% - Proteus processing completed successfully >> python\proteus\daily_run.log
+) else (
+    echo %date% %time% - Proteus processing FAILED with error code %ERRORLEVEL% >> python\proteus\daily_run.log
+)

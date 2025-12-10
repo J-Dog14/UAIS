@@ -46,10 +46,21 @@ def run_daily_proteus_job() -> None:
     logger.info(f"Date range: {start_date} to {end_date}")
     
     # Launch browser
+    headless_mode = is_headless()
     logger.info("Launching browser...")
+    if headless_mode:
+        logger.info("  Running in headless mode (browser hidden)")
+    else:
+        logger.info("  Running with visible browser window (you can watch the process)")
+        logger.info("  Set PROTEUS_HEADLESS=true to run in background")
+    
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=is_headless())
-        context = browser.new_context()
+        browser = p.chromium.launch(
+            headless=headless_mode,
+            slow_mo=500  # Slow down actions by 500ms so you can see what's happening
+        )
+        # Create context with downloads enabled
+        context = browser.new_context(accept_downloads=True)
         page = context.new_page()
         
         try:
@@ -61,11 +72,14 @@ def run_daily_proteus_job() -> None:
             
             logger.info("Login successful!")
             
-            # Download CSV
+            # Download CSV (use the same page that's logged in)
             logger.info("Downloading CSV...")
             try:
+                # Ensure downloads are accepted for this context
+                context.set_extra_http_headers({})
+                
                 csv_path = download_daily_csv(
-                    browser=browser,
+                    page=page,
                     target_dir=download_dir,
                     start_date=start_date,
                     end_date=end_date

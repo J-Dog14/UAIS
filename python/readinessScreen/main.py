@@ -16,6 +16,7 @@ from common.config import get_raw_paths
 from common.athlete_manager import get_warehouse_connection, get_or_create_athlete
 from common.athlete_matcher import update_athlete_data_flag
 from common.athlete_utils import extract_source_athlete_id
+from common.duplicate_detector import check_and_merge_duplicates
 import psycopg2
 from psycopg2.extras import execute_values
 from datetime import datetime
@@ -379,6 +380,19 @@ def process_txt_files(output_path: str):
         print("Athlete flags updated successfully")
     except Exception as e:
         print(f"Warning: Could not update athlete flags: {str(e)}")
+    
+    # Check for duplicate athletes and prompt to merge
+    if processed:
+        print("\nChecking for similar athlete names...")
+        try:
+            pg_conn = get_warehouse_connection()
+            processed_uuids = [uuid for _, uuid, _ in processed]
+            check_and_merge_duplicates(conn=pg_conn, athlete_uuids=processed_uuids, min_similarity=0.80)
+            pg_conn.close()
+        except Exception as e:
+            print(f"Warning: Could not check for duplicates: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
     # Summary
     print("\n" + "=" * 60)

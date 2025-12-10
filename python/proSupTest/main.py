@@ -24,6 +24,7 @@ from common.config import get_raw_paths, get_warehouse_engine
 from common.athlete_manager import get_warehouse_connection, get_or_create_athlete
 from common.athlete_matcher import update_athlete_data_flag
 from common.athlete_utils import extract_source_athlete_id
+from common.duplicate_detector import check_and_merge_duplicates
 from common.db_utils import write_df
 from proSupTest.file_parsers import (
     select_folder_dialog,
@@ -406,6 +407,15 @@ def process_single_folder(folder_path: str):
         
         # Update data flag
         update_athlete_data_flag(pg_conn, athlete_uuid, "pro_sup", has_data=True)
+        
+        # Check for duplicate athletes and prompt to merge
+        print("\nChecking for similar athlete names...")
+        try:
+            check_and_merge_duplicates(conn=pg_conn, athlete_uuids=[athlete_uuid], min_similarity=0.80)
+        except Exception as e:
+            print(f"Warning: Could not check for duplicates: {str(e)}")
+            import traceback
+            traceback.print_exc()
         
         # Find and parse ASCII file
         ascii_file_path = find_ascii_file_for_folder(folder_path)

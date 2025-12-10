@@ -2,6 +2,7 @@
 ETL pipeline for Proteus data.
 """
 import os
+import re
 import logging
 import shutil
 from pathlib import Path
@@ -11,7 +12,8 @@ import pandas as pd
 from common.config import get_warehouse_engine
 from common.db_utils import write_df
 from common.id_utils import attach_athlete_uuid
-from common.athlete_manager import get_warehouse_connection, update_athlete_flags
+from common.athlete_manager import get_warehouse_connection, update_athlete_flags, get_or_create_athlete
+from common.duplicate_detector import check_and_merge_duplicates
 from proteus.process_raw import clean_proteus, load_raw_proteus
 from common.io_utils import load_csv, find_files
 
@@ -80,41 +82,126 @@ def ensure_column_exists(conn, table_name: str, column_name: str, column_type: s
                 conn.rollback()
 
 
-def process_proteus_csv_file(csv_path: Path, conn) -> bool:
+def process_proteus_file(file_path: Path, conn) -> list:
     """
-    Process a single Proteus CSV file.
+    Process a single Proteus Excel or CSV file.
     
     Args:
-        csv_path: Path to CSV file
+        file_path: Path to Excel or CSV file
         conn: PostgreSQL connection
         
     Returns:
         True if successful, False otherwise
     """
-    logger.info(f"Processing: {csv_path.name}")
+    logger.info(f"Processing: {file_path.name}")
     
     try:
-        # Load CSV
-        df = load_csv(csv_path)
+        # Load file (Excel or CSV)
+        if file_path.suffix.lower() in ['.xlsx', '.xls']:
+            logger.info(f"Reading Excel file: {file_path.name}")
+            df = pd.read_excel(file_path)
+        else:
+            logger.info(f"Reading CSV file: {file_path.name}")
+            df = load_csv(file_path)
+        
         if df.empty:
-            logger.warning(f"CSV file is empty: {csv_path.name}")
+            logger.warning(f"File is empty: {file_path.name}")
             return False
         
+        # Filter for baseball and softball only (case-insensitive)
+        # Handle both 'Sport' and 'sport' column names
+        sport_col = None
+        for col in df.columns:
+            if col.lower() == 'sport':
+                sport_col = col
+                break
+        
+        if sport_col:
+            before_count = len(df)
+            df = df[df[sport_col].astype(str).str.lower().isin(['baseball', 'softball'])]
+            after_count = len(df)
+            logger.info(f"Filtered Sport: {before_count} rows -> {after_count} rows (baseball/softball only)")
+            if df.empty:
+                logger.warning(f"No baseball/softball data in file: {file_path.name}")
+                return False
+        
         # Clean data
-        clean_df = clean_proteus(df)
+        clean_df = clean_proteus(df, file_path)
         if clean_df.empty:
-            logger.warning(f"No data after cleaning: {csv_path.name}")
+            logger.warning(f"No data after cleaning: {file_path.name}")
             return False
         
         # Add source_file column
-        clean_df['source_file'] = str(csv_path)
+        clean_df['source_file'] = str(file_path)
         
-        # Attach athlete UUIDs
-        clean_df = attach_athlete_uuid(
-            clean_df,
-            source_system='proteus',
-            source_id_column='source_athlete_id'
-        )
+        # Create/get athletes and attach UUIDs
+        # Use get_or_create_athlete for each unique athlete
+        logger.info("Creating/getting athletes...")
+        clean_df['athlete_uuid'] = None
+        
+        # Get unique athletes from the data
+        unique_athletes = clean_df[['source_athlete_id', 'user_name', 'birth_date', 'sex', 'height', 'weight']].drop_duplicates(subset=['source_athlete_id'])
+        
+        athlete_uuid_map = {}
+        for _, athlete_row in unique_athletes.iterrows():
+            source_id = athlete_row['source_athlete_id']
+            if pd.isna(source_id) or source_id == '':
+                continue
+                
+            name = athlete_row.get('user_name') or str(source_id)
+            birth_date = athlete_row.get('birth_date')
+            gender = athlete_row.get('sex')
+            height = athlete_row.get('height')
+            weight = athlete_row.get('weight')
+            
+            # Convert birth_date to string if it's a datetime
+            # Check for NaT (Not a Time) first, which is pandas' equivalent of NaN for dates
+            if pd.isna(birth_date):
+                birth_date = None
+            elif hasattr(birth_date, 'strftime'):
+                try:
+                    # Only call strftime if it's not NaT
+                    if not pd.isna(birth_date):
+                        birth_date = birth_date.strftime('%Y-%m-%d')
+                    else:
+                        birth_date = None
+                except (ValueError, AttributeError, TypeError):
+                    # If strftime fails (e.g., NaT), set to None
+                    birth_date = None
+            elif pd.notna(birth_date):
+                birth_date = str(birth_date)
+            else:
+                birth_date = None
+            
+            try:
+                athlete_uuid = get_or_create_athlete(
+                    name=name,
+                    date_of_birth=birth_date,
+                    gender=gender,
+                    height=float(height) if pd.notna(height) else None,
+                    weight=float(weight) if pd.notna(weight) else None,
+                    source_system='proteus',
+                    source_athlete_id=str(source_id),
+                    check_app_db=False  # Skip app DB check for backfill
+                )
+                athlete_uuid_map[source_id] = athlete_uuid
+                logger.debug(f"Mapped {name} ({source_id}) -> {athlete_uuid}")
+            except Exception as e:
+                logger.warning(f"Failed to create/get athlete for {name} ({source_id}): {e}")
+                continue
+        
+        # Map UUIDs back to dataframe
+        clean_df['athlete_uuid'] = clean_df['source_athlete_id'].map(athlete_uuid_map)
+        
+        # Check for rows without UUIDs
+        missing_uuids = clean_df['athlete_uuid'].isna().sum()
+        if missing_uuids > 0:
+            logger.warning(f"{missing_uuids} rows have no athlete_uuid. These will be skipped.")
+            clean_df = clean_df[clean_df['athlete_uuid'].notna()].copy()
+        
+        if clean_df.empty:
+            logger.error("No rows with valid athlete_uuid after mapping")
+            return False
         
         clean_df['source_system'] = 'proteus'
         clean_df['created_at'] = datetime.now()
@@ -122,25 +209,72 @@ def process_proteus_csv_file(csv_path: Path, conn) -> bool:
         # Ensure source_file column exists in database
         ensure_column_exists(conn, 'f_proteus', 'source_file', 'TEXT')
         
-        # Write to database
+        # Dynamically ensure all columns exist in database
+        # This allows the schema to grow as new columns appear in Excel exports
+        for col in clean_df.columns:
+            if col in ['athlete_uuid', 'session_date', 'source_system', 'source_athlete_id', 
+                      'age_at_collection', 'age_group', 'created_at', 'source_file']:
+                continue  # Skip standard columns
+            
+            # Infer column type from data
+            sample_value = clean_df[col].dropna().iloc[0] if not clean_df[col].dropna().empty else None
+            if sample_value is not None:
+                if isinstance(sample_value, (int, pd.Int64Dtype)):
+                    col_type = 'INTEGER'
+                elif isinstance(sample_value, (float, pd.Float64Dtype)):
+                    col_type = 'DECIMAL'
+                elif isinstance(sample_value, bool):
+                    col_type = 'BOOLEAN'
+                elif isinstance(sample_value, (pd.Timestamp, datetime)):
+                    col_type = 'DATE'
+                else:
+                    col_type = 'TEXT'
+            else:
+                col_type = 'TEXT'
+            
+            # Sanitize column name for SQL
+            sql_col_name = col.lower().replace(' ', '_').replace('-', '_')
+            sql_col_name = ''.join(c if c.isalnum() or c == '_' else '_' for c in sql_col_name)
+            sql_col_name = re.sub(r'_+', '_', sql_col_name).strip('_')
+            
+            ensure_column_exists(conn, 'f_proteus', sql_col_name, col_type)
+        
+        # Rename columns to match database (sanitize for SQL)
+        clean_df_renamed = clean_df.copy()
+        column_mapping = {}
+        for col in clean_df.columns:
+            sql_col_name = col.lower().replace(' ', '_').replace('-', '_')
+            sql_col_name = ''.join(c if c.isalnum() or c == '_' else '_' for c in sql_col_name)
+            sql_col_name = re.sub(r'_+', '_', sql_col_name).strip('_')
+            if col != sql_col_name:
+                column_mapping[col] = sql_col_name
+        
+        if column_mapping:
+            clean_df_renamed = clean_df_renamed.rename(columns=column_mapping)
+        
+        # Write to database (write_df will automatically batch to avoid parameter limits)
         engine = get_warehouse_engine()
-        write_df(clean_df, 'f_proteus', engine, if_exists='append')
+        logger.info(f"Writing {len(clean_df_renamed)} rows to database...")
+        write_df(clean_df_renamed, 'f_proteus', engine, if_exists='append')
+        logger.info(f"✓ Data written successfully")
         
         # Update athlete flags
+        processed_uuids = []
         if 'athlete_uuid' in clean_df.columns:
             unique_uuids = clean_df['athlete_uuid'].dropna().unique()
             from common.athlete_matcher import update_athlete_data_flag
             for uuid in unique_uuids:
                 try:
                     update_athlete_data_flag(conn, str(uuid), "proteus", has_data=True)
+                    processed_uuids.append(str(uuid))
                 except:
                     pass
         
-        logger.info(f"✓ Processed {len(clean_df)} rows from {csv_path.name}")
-        return True
+        logger.info(f"✓ Processed {len(clean_df)} rows from {file_path.name}")
+        return processed_uuids  # Return processed UUIDs instead of True
         
     except Exception as e:
-        logger.error(f"Error processing {csv_path.name}: {e}", exc_info=True)
+        logger.error(f"Error processing {file_path.name}: {e}", exc_info=True)
         return False
 
 
@@ -199,22 +333,25 @@ def run_daily_proteus_ingest(inbox_dir: Optional[Path] = None, archive_dir: Opti
         processed_files = get_processed_files(conn)
         logger.info(f"Found {len(processed_files)} already processed files")
         
-        # Find CSV files in inbox
-        csv_files = list(inbox_dir.glob("*.csv"))
-        if not csv_files:
-            logger.info("No CSV files found in inbox")
+        # Find Excel files in inbox (Proteus downloads as .xlsx)
+        excel_files = list(inbox_dir.glob("*.xlsx")) + list(inbox_dir.glob("*.xls"))
+        csv_files = list(inbox_dir.glob("*.csv"))  # Also check for CSV for backward compatibility
+        all_files = excel_files + csv_files
+        
+        if not all_files:
+            logger.info("No Excel or CSV files found in inbox")
             return
         
-        logger.info(f"Found {len(csv_files)} CSV files in inbox")
+        logger.info(f"Found {len(excel_files)} Excel files and {len(csv_files)} CSV files in inbox")
         
         # Filter out already processed files
         new_files = []
-        for csv_file in csv_files:
-            file_path_normalized = os.path.normpath(str(csv_file))
+        for file_path in all_files:
+            file_path_normalized = os.path.normpath(str(file_path))
             if file_path_normalized not in processed_files:
-                new_files.append(csv_file)
+                new_files.append(file_path)
             else:
-                logger.info(f"Skipping already processed: {csv_file.name}")
+                logger.info(f"Skipping already processed: {file_path.name}")
         
         if not new_files:
             logger.info("All files have already been processed")
@@ -225,21 +362,28 @@ def run_daily_proteus_ingest(inbox_dir: Optional[Path] = None, archive_dir: Opti
         # Process each file
         processed_count = 0
         failed_count = 0
+        all_processed_uuids = []
         
-        for csv_file in new_files:
-            if process_proteus_csv_file(csv_file, conn):
+        for file_path in new_files:
+            result = process_proteus_file(file_path, conn)
+            # process_proteus_file returns a list of UUIDs on success, False on failure
+            if result is not False and result is not None:
                 # Move to archive
-                archive_path = archive_dir / csv_file.name
+                archive_path = archive_dir / file_path.name
                 if archive_path.exists():
                     import time
                     timestamp = int(time.time())
-                    archive_path = archive_dir / f"{csv_file.stem}_{timestamp}{csv_file.suffix}"
+                    archive_path = archive_dir / f"{file_path.stem}_{timestamp}{file_path.suffix}"
                 
-                shutil.move(str(csv_file), str(archive_path))
+                shutil.move(str(file_path), str(archive_path))
                 logger.info(f"✓ Archived: {archive_path.name}")
                 processed_count += 1
+                # Collect UUIDs from processed file
+                if isinstance(result, list):
+                    all_processed_uuids.extend(result)
             else:
                 failed_count += 1
+                logger.error(f"Failed to process: {file_path.name}")
         
         # Update athlete flags
         logger.info("Updating athlete data flags...")
@@ -248,6 +392,16 @@ def run_daily_proteus_ingest(inbox_dir: Optional[Path] = None, archive_dir: Opti
             update_athlete_flags(conn=conn, verbose=True)
         except Exception as e:
             logger.warning(f"Could not update athlete flags: {e}")
+        
+        # Check for duplicate athletes and prompt to merge
+        if all_processed_uuids:
+            # Remove duplicates from UUID list
+            unique_processed_uuids = list(set(all_processed_uuids))
+            try:
+                logger.info("Checking for similar athlete names...")
+                check_and_merge_duplicates(conn=conn, athlete_uuids=unique_processed_uuids, min_similarity=0.80)
+            except Exception as e:
+                logger.warning(f"Could not check for duplicates: {str(e)}")
         
         # Summary
         logger.info("=" * 80)
@@ -264,29 +418,40 @@ def etl_proteus():
     """
     Legacy ETL function for Proteus data.
     Uses the old method of loading from raw data directory.
+    NOTE: This function is deprecated. Use run_daily_proteus_ingest() or process_proteus_file() instead.
     """
+    logger.warning("etl_proteus() is deprecated. Use run_daily_proteus_ingest() or process_proteus_file() instead.")
     logger.info("Starting Proteus ETL (legacy mode)...")
     
     try:
-        raw_df = load_raw_proteus()
-        if raw_df.empty:
-            logger.warning("No raw data found. Skipping ETL.")
-            return
+        from common.athlete_manager import get_warehouse_connection
+        conn = get_warehouse_connection()
         
-        clean_df = clean_proteus(raw_df)
-        clean_df = attach_athlete_uuid(
-            clean_df,
-            source_system='proteus',
-            source_id_column='source_athlete_id'
-        )
-        
-        clean_df['source_system'] = 'proteus'
-        clean_df['created_at'] = datetime.now()
-        
-        engine = get_warehouse_engine()
-        write_df(clean_df, 'f_proteus', engine, if_exists='append')
-        
-        logger.info(f"Successfully loaded {len(clean_df)} rows to f_proteus")
+        try:
+            raw_df = load_raw_proteus()
+            if raw_df.empty:
+                logger.warning("No raw data found. Skipping ETL.")
+                return
+            
+            # Use a temporary file path for processing
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as tmp_file:
+                tmp_path = Path(tmp_file.name)
+                raw_df.to_csv(tmp_path, index=False)
+            
+            try:
+                # Use the same process_proteus_file() function for consistency
+                result = process_proteus_file(tmp_path, conn)
+                if result:
+                    logger.info(f"Successfully loaded data to f_proteus")
+                else:
+                    logger.error("Failed to process data")
+            finally:
+                # Clean up temp file
+                if tmp_path.exists():
+                    tmp_path.unlink()
+        finally:
+            conn.close()
         
     except Exception as e:
         logger.error(f"Error in Proteus ETL: {e}", exc_info=True)

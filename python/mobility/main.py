@@ -7,6 +7,7 @@ import os
 import sys
 import re
 import json
+import logging
 from pathlib import Path
 from datetime import datetime, date
 from typing import Dict, List, Optional, Any
@@ -28,6 +29,7 @@ from common.athlete_manager import (
 )
 from common.athlete_matcher import update_athlete_data_flag
 from common.athlete_utils import extract_source_athlete_id
+from common.duplicate_detector import check_and_merge_duplicates
 
 # Import Google Drive utilities
 try:
@@ -661,26 +663,29 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
 def process_mobility_directory(directory_path: str):
     """
     Process all Excel files in the mobility assessments directory.
+    Uses logging for all output.
     
     Args:
         directory_path: Path to directory containing mobility assessment files
     """
-    print("=" * 80)
-    print("Mobility Assessment Data Processing")
-    print("=" * 80)
-    print(f"\nScanning directory: {directory_path}")
+    logger = logging.getLogger(__name__)
+    
+    logger.info("=" * 80)
+    logger.info("Mobility Assessment Data Processing")
+    logger.info("=" * 80)
+    logger.info(f"Scanning directory: {directory_path}")
     
     if not os.path.exists(directory_path):
         raise ValueError(f"Directory not found: {directory_path}")
     
     # Connect to PostgreSQL
-    print("Connecting to PostgreSQL warehouse...")
+    logger.info("Connecting to PostgreSQL warehouse...")
     conn = get_warehouse_connection()
     
     try:
         # Get list of already processed files (by source_file path)
         processed_files = get_processed_files(conn)
-        print(f"Found {len(processed_files)} already processed files")
+        logger.info(f"Found {len(processed_files)} already processed files")
         
         # Normalize paths for comparison
         processed_files_normalized = {os.path.normpath(f) for f in processed_files}
@@ -691,11 +696,11 @@ def process_mobility_directory(directory_path: str):
         
         # Check if directory exists and is accessible
         if not dir_path.exists():
-            print(f"Error: Directory does not exist: {directory_path}")
+            logger.error(f"Directory does not exist: {directory_path}")
             return
         
         if not dir_path.is_dir():
-            print(f"Error: Path is not a directory: {directory_path}")
+            logger.error(f"Path is not a directory: {directory_path}")
             return
         
         # Try different methods to find files (prioritize Excel files)
@@ -703,7 +708,7 @@ def process_mobility_directory(directory_path: str):
             found = list(dir_path.glob(ext))
             excel_files.extend(found)
             if found:
-                print(f"  Found {len(found)} files with pattern {ext}")
+                logger.debug(f"Found {len(found)} files with pattern {ext}")
         
         # Also try case-insensitive search using os.listdir
         # This helps find files that might not have standard extensions
@@ -719,7 +724,7 @@ def process_mobility_directory(directory_path: str):
                 # Check by extension
                 if file_lower.endswith(('.xlsx', '.xls')):
                     excel_files.append(file_path)
-                    print(f"  Found file via os.listdir: {file}")
+                    logger.debug(f"Found file via os.listdir: {file}")
                 # Also check by file type (Windows might show as "Microsoft Excel Worksheet")
                 elif file_path.is_file():
                     try:
@@ -730,60 +735,60 @@ def process_mobility_directory(directory_path: str):
                         if mime_type in ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                                         'application/vnd.ms-excel']:
                             excel_files.append(file_path)
-                            print(f"  Found Excel file (by MIME type): {file}")
+                            logger.debug(f"Found Excel file (by MIME type): {file}")
                     except:
                         pass
         except Exception as e:
-            print(f"  Warning: Could not list directory contents: {e}")
+            logger.warning(f"Could not list directory contents: {e}")
         
         if not excel_files:
-            print(f"\nNo Excel files found in directory: {directory_path}")
-            print(f"Directory contents:")
+            logger.warning(f"No Excel files found in directory: {directory_path}")
+            logger.info("Directory contents:")
             try:
                 contents = os.listdir(directory_path)
                 if contents:
                     gsheet_count = sum(1 for item in contents if item.lower().endswith('.gsheet'))
                     xlsx_count = sum(1 for item in contents if item.lower().endswith(('.xlsx', '.xls')))
                     if gsheet_count > 0 and xlsx_count == 0:
-                        print(f"\n  Found {gsheet_count} .gsheet files (Google Sheets shortcuts)")
-                        print(f"  Note: .gsheet files need to be downloaded as Excel files (.xlsx) to process")
+                        logger.info(f"Found {gsheet_count} .gsheet files (Google Sheets shortcuts)")
+                        logger.info("Note: .gsheet files need to be downloaded as Excel files (.xlsx) to process")
                     for item in contents[:10]:  # Show first 10 items
                         item_path = dir_path / item
-                        print(f"  - {item} ({'file' if item_path.is_file() else 'dir'})")
+                        logger.info(f"  - {item} ({'file' if item_path.is_file() else 'dir'})")
                     if len(contents) > 10:
-                        print(f"  ... and {len(contents) - 10} more items")
+                        logger.info(f"  ... and {len(contents) - 10} more items")
                 else:
-                    print("  (directory is empty)")
+                    logger.info("  (directory is empty)")
             except Exception as e:
-                print(f"  Could not list directory: {e}")
+                logger.error(f"Could not list directory: {e}")
             return
         
         # Remove duplicates (in case case-insensitive search found same files)
         excel_files = list(set(excel_files))
         
-        # Debug: Show first few files found
+        # Log files found
         if excel_files:
-            print(f"\nFound {len(excel_files)} Excel files to process")
-            print(f"Sample files (first 5):")
+            logger.info(f"Found {len(excel_files)} Excel files to process")
+            logger.debug("Sample files (first 5):")
             for f in excel_files[:5]:
-                print(f"  - {f.name}")
+                logger.debug(f"  - {f.name}")
             if len(excel_files) > 5:
-                print(f"  ... and {len(excel_files) - 5} more")
+                logger.debug(f"  ... and {len(excel_files) - 5} more")
         else:
-            print(f"\nNo Excel files found. Listing all files in directory for debugging:")
+            logger.warning("No Excel files found. Listing all files in directory for debugging:")
             try:
                 all_items = os.listdir(directory_path)
                 for item in all_items[:20]:  # Show first 20
                     item_path = dir_path / item
                     if item_path.is_file():
                         size = item_path.stat().st_size
-                        print(f"  - {item} (file, {size} bytes)")
+                        logger.debug(f"  - {item} (file, {size} bytes)")
                     else:
-                        print(f"  - {item} (directory)")
+                        logger.debug(f"  - {item} (directory)")
                 if len(all_items) > 20:
-                    print(f"  ... and {len(all_items) - 20} more items")
+                    logger.debug(f"  ... and {len(all_items) - 20} more items")
             except Exception as e:
-                print(f"  Error listing directory: {e}")
+                logger.error(f"Error listing directory: {e}")
         
         # Filter out already processed files (normalize paths for comparison)
         new_files = []
@@ -792,13 +797,13 @@ def process_mobility_directory(directory_path: str):
             if file_path_normalized not in processed_files_normalized:
                 new_files.append(f)
             else:
-                print(f"  Skipping already processed: {f.name}")
+                logger.info(f"Skipping already processed: {f.name}")
         
         if not new_files:
-            print("All files have already been processed.")
+            logger.info("All files have already been processed.")
             return
         
-        print(f"Processing {len(new_files)} new files...")
+        logger.info(f"Processing {len(new_files)} new files...")
         
         # Process each file
         processed = []
@@ -819,34 +824,90 @@ def process_mobility_directory(directory_path: str):
                 errors.append((str(file_path), result.get('error', 'Unknown error')))
         
         # Update athlete flags
-        print("\nUpdating athlete data flags...")
+        logger.info("")
+        logger.info("Updating athlete data flags...")
         try:
             update_athlete_flags(conn=conn, verbose=True)
         except Exception as e:
-            print(f"Warning: Could not update athlete flags: {e}")
+            logger.warning(f"Could not update athlete flags: {e}")
+        
+        # Check for duplicate athletes and prompt to merge
+        if processed:
+            logger.info("")
+            logger.info("Checking for similar athlete names...")
+            try:
+                # Extract unique athlete UUIDs from processed results
+                processed_uuids = list(set([r.get('athlete_uuid') for r in processed if r.get('success') and r.get('athlete_uuid')]))
+                if processed_uuids:
+                    check_and_merge_duplicates(conn=conn, athlete_uuids=processed_uuids, min_similarity=0.80)
+            except Exception as e:
+                logger.warning(f"Could not check for duplicates: {str(e)}")
+                import traceback
+                traceback.print_exc()
         
         # Summary
-        print("\n" + "=" * 80)
-        print("Processing Summary")
-        print("=" * 80)
-        print(f"Processed: {len(processed)} files")
-        print(f"Inserted: {inserted_count} records")
-        print(f"Updated: {updated_count} records")
-        print(f"Errors: {len(errors)} files")
+        logger.info("")
+        logger.info("=" * 80)
+        logger.info("Processing Summary")
+        logger.info("=" * 80)
+        logger.info(f"Processed: {len(processed)} files")
+        logger.info(f"Inserted: {inserted_count} records")
+        logger.info(f"Updated: {updated_count} records")
+        logger.info(f"Errors: {len(errors)} files")
         
         if errors:
-            print("\nErrors:")
+            logger.error("")
+            logger.error("Errors encountered:")
             for file_path, error in errors:
-                print(f"  - {os.path.basename(file_path)}: {error}")
+                logger.error(f"  - {os.path.basename(file_path)}: {error}")
         
     finally:
         conn.close()
+
+
+def setup_logging():
+    """Set up logging to both console and file."""
+    import logging
+    from pathlib import Path
+    from datetime import datetime
+    
+    # Create logs directory
+    log_dir = Path(__file__).parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    
+    # Create log file with timestamp
+    log_file = log_dir / f"mobility_{datetime.now().strftime('%Y%m%d')}.log"
+    
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler()  # Also log to console
+        ],
+        force=True  # Override any existing configuration
+    )
+    
+    return log_file
 
 
 def main():
     """
     Main execution function.
     """
+    # Set up logging FIRST (before any other operations)
+    log_file = setup_logging()
+    logger = logging.getLogger(__name__)
+    
+    logger.info("=" * 80)
+    logger.info("Mobility Assessment Processing - Starting")
+    logger.info("=" * 80)
+    logger.info(f"Execution time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Log file: {log_file}")
+    logger.info(f"Script location: {Path(__file__).parent}")
+    logger.info("")
+    
     # Paths
     excel_directory = r"D:\Mobility Assessments"
     gsheet_directory = r"G:\My Drive\Data\Mobility Assessments"
@@ -858,14 +919,14 @@ def main():
     
     # Check if Excel directory exists, create if not
     if not os.path.exists(excel_directory):
-        print(f"Creating directory: {excel_directory}")
+        logger.info(f"Creating directory: {excel_directory}")
         os.makedirs(excel_directory, exist_ok=True)
     
     # Step 1: Download missing Google Sheets as Excel files
     if GOOGLE_DRIVE_AVAILABLE and os.path.exists(gsheet_directory) and credentials_path.exists():
-        print("=" * 80)
-        print("Step 1: Downloading missing Google Sheets")
-        print("=" * 80)
+        logger.info("=" * 80)
+        logger.info("Step 1: Downloading missing Google Sheets")
+        logger.info("=" * 80)
         
         download_result = download_missing_sheets(
             excel_directory=excel_directory,
@@ -874,44 +935,54 @@ def main():
         )
         
         if download_result.get('success'):
-            print(f"\n✓ Downloaded {download_result.get('downloaded', 0)} files")
+            logger.info(f"✓ Downloaded {download_result.get('downloaded', 0)} files")
             if download_result.get('failed', 0) > 0:
-                print(f"✗ Failed to download {download_result.get('failed', 0)} files")
+                logger.warning(f"✗ Failed to download {download_result.get('failed', 0)} files")
                 if download_result.get('errors'):
-                    print("\nErrors:")
+                    logger.warning("Errors:")
                     for error in download_result['errors'][:10]:  # Show first 10
-                        print(f"  - {error}")
+                        logger.warning(f"  - {error}")
         else:
-            print(f"\n✗ Download step failed: {download_result.get('error', 'Unknown error')}")
-            print("Continuing with existing Excel files...")
+            logger.warning(f"✗ Download step failed: {download_result.get('error', 'Unknown error')}")
+            logger.info("Continuing with existing Excel files...")
     else:
         if not GOOGLE_DRIVE_AVAILABLE:
-            print("Warning: Google Drive API not available. Skipping download step.")
+            logger.warning("Google Drive API not available. Skipping download step.")
         elif not os.path.exists(gsheet_directory):
-            print(f"Warning: Google Sheets directory not found: {gsheet_directory}")
-            print("Skipping download step.")
+            logger.warning(f"Google Sheets directory not found: {gsheet_directory}")
+            logger.info("Skipping download step.")
         elif not credentials_path.exists():
-            print(f"Warning: Credentials file not found: {credentials_path}")
-            print("Skipping download step.")
+            logger.warning(f"Credentials file not found: {credentials_path}")
+            logger.info("Skipping download step.")
     
     # Step 2: Process all Excel files
-    print("\n" + "=" * 80)
-    print("Step 2: Processing Excel files")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("Step 2: Processing Excel files")
+    logger.info("=" * 80)
     
     if not os.path.exists(excel_directory):
-        print(f"ERROR: Directory not found: {excel_directory}")
-        print(f"\nPlease ensure the directory exists and contains Excel files.")
+        logger.error(f"Directory not found: {excel_directory}")
+        logger.error("Please ensure the directory exists and contains Excel files.")
         return
     
-    print(f"Using directory: {excel_directory}")
+    logger.info(f"Using directory: {excel_directory}")
     
-    # Process all files
-    process_mobility_directory(excel_directory)
-    
-    print("\n" + "=" * 80)
-    print("All processing complete!")
-    print("=" * 80)
+    try:
+        # Process all files
+        process_mobility_directory(excel_directory)
+        
+        logger.info("=" * 80)
+        logger.info("All processing complete!")
+        logger.info(f"Completion time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("=" * 80)
+    except Exception as e:
+        logger.error("=" * 80)
+        logger.error("PROCESSING FAILED!")
+        logger.error(f"Error: {e}")
+        logger.error(f"Failure time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.error("=" * 80)
+        logger.error("", exc_info=True)
+        raise
 
 
 if __name__ == "__main__":
