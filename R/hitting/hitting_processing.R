@@ -1,3 +1,7 @@
+# Runs all Hitting Data
+# This file processes all hitting data from a specified directory.
+# For interactive folder selection, use main.R instead.
+
 # ==== Minimal deps ====
 library(xml2)
 library(purrr)
@@ -390,6 +394,11 @@ extract_athlete_info <- function(path) {
       }
       if (!is.na(collection_date) && !is.na(dob_date)) {
         age_at_collection <- as.numeric(difftime(collection_date, dob_date, units = "days")) / 365.25
+        # Log for debugging if age seems wrong
+        if (!is.na(age_at_collection) && (age_at_collection < 10 || age_at_collection > 50)) {
+          log_progress("  [WARNING] Calculated age_at_collection seems unusual:", round(age_at_collection, 2))
+          log_progress("    DOB:", dob, "| Creation date:", creation_date, "| Calculated age:", round(age_at_collection, 2))
+        }
       }
     }, error = function(e) NULL)
   }
@@ -574,9 +583,12 @@ extract_metric_data <- function(doc, owner_name) {
 }
 
 # ---------- Main processing function ----------
-process_all_files <- function() {
+process_all_files <- function(data_root = NULL) {
   # Determine root directory
-  root_dir <- if (is.null(DATA_ROOT)) {
+  # If data_root parameter is provided, use it; otherwise use DATA_ROOT global variable
+  root_dir <- if (!is.null(data_root)) {
+    data_root
+  } else if (is.null(DATA_ROOT)) {
     # Default to Hitting folder in current directory
     hitting_dir <- file.path(getwd(), "Hitting")
     if (dir.exists(hitting_dir)) {
@@ -589,7 +601,7 @@ process_all_files <- function() {
   }
   
   # Validate that the directory exists and is accessible
-  if (!is.null(DATA_ROOT)) {
+  if (!is.null(data_root) || !is.null(DATA_ROOT)) {
     if (!dir.exists(root_dir)) {
       stop("Data directory does not exist or is not accessible: ", root_dir, 
            "\nPlease check:\n",
@@ -1708,6 +1720,57 @@ process_all_files <- function() {
             log_progress("  [WARNING] Error updating athlete flags:", conditionMessage(e))
             log_progress("  You can manually update flags by running: SELECT update_athlete_data_flags();")
           })
+          
+          # Check for duplicate athletes and prompt to merge
+          log_progress("")
+          log_progress("=", rep("=", 60), sep = "")
+          log_progress("CHECKING FOR DUPLICATE ATHLETES")
+          log_progress("=", rep("=", 60), sep = "")
+          tryCatch({
+            # Get list of processed athlete UUIDs
+            processed_uuids <- sapply(athlete_list, function(a) {
+              if (nrow(a) > 0 && "uid" %in% names(a) && !is.na(a$uid[1])) {
+                return(a$uid[1])
+              }
+              return(NULL)
+            })
+            processed_uuids <- unique(unlist(processed_uuids))
+            processed_uuids <- processed_uuids[!is.null(processed_uuids)]
+            
+            log_progress("  Checking", length(processed_uuids), "processed athlete UUID(s) for duplicates...")
+            if (length(processed_uuids) > 0) {
+              log_progress("  Athlete UUIDs to check:", paste(processed_uuids, collapse = ", "))
+            }
+            
+            if (length(processed_uuids) > 0 && exists("check_and_merge_duplicates")) {
+              log_progress("  Calling check_and_merge_duplicates()...")
+              duplicate_result <- check_and_merge_duplicates(
+                athlete_uuids = processed_uuids,
+                min_similarity = 0.80
+              )
+              log_progress("  Duplicate check completed")
+              if (!is.null(duplicate_result)) {
+                log_progress("  Result:", paste(names(duplicate_result), "=", duplicate_result, collapse = ", "))
+                if (!is.null(duplicate_result$matches_found)) {
+                  log_progress("  [DUPLICATE CHECK] Found", duplicate_result$matches_found, "potential matches")
+                  log_progress("  [DUPLICATE CHECK] Merged:", duplicate_result$merged, "| Skipped:", duplicate_result$skipped)
+                }
+              } else {
+                log_progress("  [WARNING] Duplicate check returned NULL result")
+              }
+            } else if (length(processed_uuids) > 0) {
+              log_progress("  [WARNING] check_and_merge_duplicates function not found - skipping duplicate check")
+              log_progress("  Processed", length(processed_uuids), "athlete UUIDs")
+              log_progress("  Function exists check:", exists("check_and_merge_duplicates"))
+            } else {
+              log_progress("  [INFO] No athlete UUIDs to check (athlete_list is empty)")
+            }
+            log_progress("=", rep("=", 60), sep = "")
+          }, error = function(e) {
+            log_progress("  [ERROR] Could not check for duplicates:", conditionMessage(e))
+            log_progress("  Error details:", toString(e))
+            traceback()
+          })
         }, error = function(e) {
           log_progress("[ERROR] Failed to write data:", conditionMessage(e))
           log_progress("  Error details:", toString(e))
@@ -1824,39 +1887,42 @@ process_all_files <- function() {
   }
 }
 
-# ---------- Run ----------
-cat("\n")
-cat("=", rep("=", 80), "\n", sep = "")
-cat("*** VERSION 2.0 - UUID MATCHING ENABLED ***\n")
-cat("=", rep("=", 80), "\n", sep = "")
-cat("\n")
-
-log_progress("=", rep("=", 60), sep = "")
-log_progress("STARTING HITTING DATA EXTRACTION - VERSION WITH UUID MATCHING")
-log_progress("=", rep("=", 60), sep = "")
-log_progress("Database file:", DB_FILE)
-log_progress("Data root:", if (is.null(DATA_ROOT)) "Current directory (Hitting folder)" else DATA_ROOT)
-log_progress("Working directory:", getwd())
-log_progress("")
-
-start_time <- Sys.time()
-
-tryCatch({
-  process_all_files()
-  end_time <- Sys.time()
-  duration <- difftime(end_time, start_time, units = "secs")
+# ---------- Auto-run (only if not sourced from main.R) ----------
+# Check if this script is being run directly (not sourced)
+if (!exists("MAIN_R_SOURCING", envir = .GlobalEnv)) {
+  cat("\n")
+  cat("=", rep("=", 80), "\n", sep = "")
+  cat("*** VERSION 2.0 - UUID MATCHING ENABLED ***\n")
+  cat("=", rep("=", 80), "\n", sep = "")
+  cat("\n")
+  
+  log_progress("=", rep("=", 60), sep = "")
+  log_progress("STARTING HITTING DATA EXTRACTION - VERSION WITH UUID MATCHING")
+  log_progress("=", rep("=", 60), sep = "")
+  log_progress("Database file:", DB_FILE)
+  log_progress("Data root:", if (is.null(DATA_ROOT)) "Current directory (Hitting folder)" else DATA_ROOT)
+  log_progress("Working directory:", getwd())
   log_progress("")
-  log_progress("=", rep("=", 60), sep = "")
-  log_progress("TOTAL PROCESSING TIME:", round(duration, 2), "seconds (", round(duration / 60, 2), "minutes)")
-  log_progress("=", rep("=", 60), sep = "")
-}, error = function(e) {
-  end_time <- Sys.time()
-  duration <- difftime(end_time, start_time, units = "secs")
-  log_progress("")
-  log_progress("=", rep("=", 60), sep = "")
-  log_progress("ERROR during processing (after", round(duration, 2), "seconds):")
-  log_progress(conditionMessage(e))
-  log_progress("=", rep("=", 60), sep = "")
-  traceback()
-})
+  
+  start_time <- Sys.time()
+  
+  tryCatch({
+    process_all_files()
+    end_time <- Sys.time()
+    duration <- difftime(end_time, start_time, units = "secs")
+    log_progress("")
+    log_progress("=", rep("=", 60), sep = "")
+    log_progress("TOTAL PROCESSING TIME:", round(duration, 2), "seconds (", round(duration / 60, 2), "minutes)")
+    log_progress("=", rep("=", 60), sep = "")
+  }, error = function(e) {
+    end_time <- Sys.time()
+    duration <- difftime(end_time, start_time, units = "secs")
+    log_progress("")
+    log_progress("=", rep("=", 60), sep = "")
+    log_progress("ERROR during processing (after", round(duration, 2), "seconds):")
+    log_progress(conditionMessage(e))
+    log_progress("=", rep("=", 60), sep = "")
+    traceback()
+  })
+}
 

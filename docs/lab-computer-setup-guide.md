@@ -149,3 +149,4 @@ After copying files, verify setup:
 - [ ] Verify all required directories exist on lab computer
 - [ ] Delete any temporary copies of sensitive files
 
+

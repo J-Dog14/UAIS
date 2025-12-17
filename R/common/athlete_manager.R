@@ -202,3 +202,138 @@ normalize_name_for_matching <- function(name) {
   return(name)
 }
 
+#' Check for duplicate athletes and prompt to merge
+#'
+#' This function calls the Python duplicate_detector module to check for
+#' similar athlete names and prompt to merge them interactively.
+#'
+#' @param athlete_uuids Optional list of athlete UUIDs to check (if NULL, checks all)
+#' @param min_similarity Minimum similarity score (0.0 to 1.0) to consider a match (default: 0.80)
+#' @param auto_skip If TRUE, skip all matches automatically (useful for non-interactive mode)
+#'
+#' @return List with summary statistics (matches_found, merged, skipped)
+#'
+#' @examples
+#' # Check specific athletes
+#' result <- check_and_merge_duplicates(athlete_uuids = c("uuid1", "uuid2"))
+#'
+#' # Check all athletes
+#' result <- check_and_merge_duplicates()
+check_and_merge_duplicates <- function(
+  athlete_uuids = NULL,
+  min_similarity = 0.80,
+  auto_skip = FALSE
+) {
+  # Find project root (assume we're in R/ subdirectory or project root)
+  project_root <- if (file.exists("python/common/duplicate_detector.py")) {
+    getwd()
+  } else if (file.exists("../python/common/duplicate_detector.py")) {
+    normalizePath("..")
+  } else if (file.exists("../../python/common/duplicate_detector.py")) {
+    normalizePath("../..")
+  } else {
+    stop("Could not find python/common/duplicate_detector.py. Please run from project root or R/ subdirectory.")
+  }
+  
+  # Build Python command arguments
+  args_list <- list(
+    min_similarity = min_similarity,
+    auto_skip = auto_skip
+  )
+  
+  # Add athlete_uuids if provided
+  if (!is.null(athlete_uuids) && length(athlete_uuids) > 0) {
+    args_list$athlete_uuids <- athlete_uuids
+  }
+  
+  # Convert to JSON for Python
+  if (!requireNamespace("jsonlite", quietly = TRUE)) {
+    stop("jsonlite package is required. Install with: install.packages('jsonlite')")
+  }
+  json_args <- jsonlite::toJSON(args_list, auto_unbox = TRUE)
+  
+  # Create temporary Python script
+  temp_script <- tempfile(fileext = ".py")
+  python_code <- sprintf('
+import sys
+import json
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(r"%s")
+sys.path.insert(0, str(project_root))
+
+import logging
+# Redirect logging to stderr so it does not interfere with stdout
+logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%%(levelname)s:%%(name)s:%%(message)s")
+
+from python.common.duplicate_detector import check_and_merge_duplicates
+from python.common.athlete_manager import get_warehouse_connection
+
+args = json.loads(r"""%s""")
+try:
+    conn = get_warehouse_connection()
+    result = check_and_merge_duplicates(conn=conn, **args)
+    conn.close()
+    # Print result as JSON to stdout
+    print(json.dumps(result))
+except Exception as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+    sys.exit(1)
+', project_root, json_args)
+  
+  writeLines(python_code, temp_script)
+  
+  # Execute Python script
+  result <- tryCatch({
+    system2(
+      "python",
+      args = c(temp_script),
+      stdout = TRUE,
+      stderr = TRUE
+    )
+  }, finally = {
+    # Clean up temp file
+    if (file.exists(temp_script)) {
+      unlink(temp_script)
+    }
+  })
+  
+  # Check for errors
+  if (any(grepl("ERROR:", result))) {
+    warning(paste(result, collapse = "\n"))
+    return(list(
+      matches_found = 0,
+      merged = 0,
+      skipped = 0,
+      error = TRUE
+    ))
+  }
+  
+  # Try to parse JSON result from stdout
+  # Filter out log messages (they go to stderr, but sometimes appear in stdout)
+  json_lines <- grep("^\\{", result, value = TRUE)
+  if (length(json_lines) > 0) {
+    tryCatch({
+      result_json <- jsonlite::fromJSON(json_lines[length(json_lines)])
+      return(result_json)
+    }, error = function(e) {
+      # If JSON parsing fails, return default structure
+      return(list(
+        matches_found = 0,
+        merged = 0,
+        skipped = 0,
+        error = TRUE
+      ))
+    })
+  }
+  
+  # If no JSON found, return default structure
+  return(list(
+    matches_found = 0,
+    merged = 0,
+    skipped = 0,
+    error = FALSE
+  ))
+}
+
