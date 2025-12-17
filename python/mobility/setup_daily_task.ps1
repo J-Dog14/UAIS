@@ -68,14 +68,15 @@ try {
     Write-Host "  - Look for '$taskName' in the task list" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "To test the task immediately:" -ForegroundColor Yellow
-    Write-Host "  Start-ScheduledTask -TaskName '$taskName'" -ForegroundColor Yellow
+    Write-Host ("  Start-ScheduledTask -TaskName '{0}'" -f $taskName) -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "Note: If the task fails to run when locked, check:" -ForegroundColor Yellow
-    Write-Host "  1. Task Scheduler -> Task -> Properties -> General" -ForegroundColor Yellow
-    Write-Host "     - 'Run whether user is logged on or not' should be checked" -ForegroundColor Yellow
-    Write-Host "  2. Task Scheduler -> Task -> Properties -> Conditions" -ForegroundColor Yellow
-    Write-Host "     - 'Wake the computer to run this task' (optional, for sleep mode)" -ForegroundColor Yellow
+    Write-Host 'Note: If the task fails to run when locked, check:' -ForegroundColor Yellow
+    Write-Host '  1. Task Scheduler -> Task -> Properties -> General' -ForegroundColor Yellow
+    Write-Host '     - Run whether user is logged on or not should be checked' -ForegroundColor Yellow
+    Write-Host '  2. Task Scheduler -> Task -> Properties -> Conditions' -ForegroundColor Yellow
+    Write-Host '     - Wake the computer to run this task (optional, for sleep mode)' -ForegroundColor Yellow
 } catch {
-    Write-Host "ERROR: Failed to create scheduled task: $_" -ForegroundColor Red
+    Write-Host 'ERROR: Failed to create scheduled task:' -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
     exit 1
 }

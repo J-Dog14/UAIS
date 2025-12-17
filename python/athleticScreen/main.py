@@ -565,26 +565,19 @@ def process_txt_files(folder_path: str):
     if processed:
         print("\nGenerating reports...")
         try:
-            from athleticScreen.create_report import generate_report
-            from common.config import get_raw_paths
+            from athleticScreen.pdf_report import generate_pdf_report
             
-            # Get output directory for reports
-            try:
-                raw_paths = get_raw_paths()
-                reports_dir = raw_paths.get('athletic_screen_reports', 
-                                           r'D:/Athletic Screen 2.0/Reports/')
-            except:
-                reports_dir = r'D:/Athletic Screen 2.0/Reports/'
+            # Set output directories for reports (save to both locations)
+            reports_dir_1 = r'G:\My Drive\Athletic Screen 2.0 Reports\Reports 2.0'
+            reports_dir_2 = r'D:\Athletic Screen 2.0\Reports'
             
-            os.makedirs(reports_dir, exist_ok=True)
+            os.makedirs(reports_dir_1, exist_ok=True)
+            os.makedirs(reports_dir_2, exist_ok=True)
             
-            # Get power files directory
-            try:
-                raw_paths = get_raw_paths()
-                power_files_dir = raw_paths.get('athletic_screen', 
-                                               r'D:/Athletic Screen 2.0/Output Files/')
-            except:
-                power_files_dir = r'D:/Athletic Screen 2.0/Output Files/'
+            # Get logo path
+            logo_path = Path(__file__).parent / "8ctnae - Faded 8 to Blue.png"
+            if not logo_path.exists():
+                logo_path = None
             
             # Generate one report per athlete (using their most recent session date)
             athletes_to_report = {}
@@ -599,17 +592,31 @@ def process_txt_files(folder_path: str):
             
             for athlete_uuid, (name, date_str) in athletes_to_report.items():
                 try:
-                    print(f"   Generating report for {name} ({date_str})...")
-                    report_path = generate_report(
+                    print(f"   Generating PDF report for {name} ({date_str})...")
+                    # Generate report to first location
+                    report_path = generate_pdf_report(
                         athlete_uuid=athlete_uuid,
                         athlete_name=name,
                         session_date=date_str,
-                        output_dir=reports_dir,
-                        power_files_dir=power_files_dir
+                        output_dir=reports_dir_1,
+                        logo_path=logo_path,
+                        power_files_dir=folder_path  # Pass the base directory for Power.txt files
                     )
-                    print(f"   ✓ Report generated: {report_path}")
+                    if report_path:
+                        print(f"   ✓ PDF report generated: {report_path}")
+                        # Copy to second location
+                        try:
+                            clean_name = name.replace(' ', '_').replace(',', '')
+                            report_filename = f"{clean_name}_{date_str}_report.pdf"
+                            report_path_2 = os.path.join(reports_dir_2, report_filename)
+                            shutil.copy2(report_path, report_path_2)
+                            print(f"   ✓ PDF report copied to: {report_path_2}")
+                        except Exception as copy_error:
+                            print(f"   Warning: Could not copy report to second location: {copy_error}")
+                    else:
+                        print(f"   ✗ Failed to generate PDF report for {name}")
                 except Exception as e:
-                    print(f"   Warning: Could not generate report for {name}: {e}")
+                    print(f"   Warning: Could not generate PDF report for {name}: {e}")
                     import traceback
                     traceback.print_exc()
         except Exception as e:

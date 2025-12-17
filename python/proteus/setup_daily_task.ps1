@@ -53,6 +53,7 @@ try {
     Write-Host "To test the task immediately:" -ForegroundColor Yellow
     Write-Host "  Start-ScheduledTask -TaskName '$taskName'" -ForegroundColor Yellow
 } catch {
-    Write-Host "ERROR: Failed to create scheduled task: $_" -ForegroundColor Red
+    Write-Host 'ERROR: Failed to create scheduled task:' -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
     exit 1
 }
