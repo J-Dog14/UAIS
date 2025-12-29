@@ -1,6 +1,7 @@
 pandas
 numpy
 scipy
+scikit-learn  # For anomaly detection (IsolationForest)
 SQLAlchemy
 psycopg2-binary   # if Postgres
 duckdb
