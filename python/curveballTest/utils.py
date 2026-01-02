@@ -53,13 +53,11 @@ def compute_pitch_stability_score(row_dict):
     a_smoothed = compute_moving_average(a_array[ws:we])
 
     if pitch_type == "curve":
-        # Made ulnar deviation (y) 20% stricter: 85 -> 68, 28 -> 23
-        x_max_angle, y_max_angle, z_max_angle = 55, 68, 80
-        x_max_std, y_max_std, z_max_std = 18, 23, 22
+        x_max_angle, y_max_angle, z_max_angle = 55, 85, 80
+        x_max_std, y_max_std, z_max_std = 18, 28, 22
     else:
-        # Made ulnar deviation (y) 20% stricter: 80 -> 65, 30 -> 25
-        x_max_angle, y_max_angle, z_max_angle = 40, 65, 70
-        x_max_std, y_max_std, z_max_std = 20, 25, 25
+        x_max_angle, y_max_angle, z_max_angle = 40, 80, 70
+        x_max_std, y_max_std, z_max_std = 20, 30, 25
 
     def angle_score(val, mx):
         return max(0, 100 - (abs(val) / mx) * 100)
