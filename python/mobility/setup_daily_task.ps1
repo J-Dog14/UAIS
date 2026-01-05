@@ -21,8 +21,12 @@ if ($existingTask) {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
 }
 
-# Create the action (run the batch file)
-$action = New-ScheduledTaskAction -Execute $scriptPath -WorkingDirectory $workingDir
+# Create the action (run the batch file via cmd.exe for more reliable execution)
+# Using cmd.exe /c ensures proper quoting and environment handling in Task Scheduler
+$action = New-ScheduledTaskAction `
+    -Execute "cmd.exe" `
+    -Argument "/c `"$scriptPath`"" `
+    -WorkingDirectory $workingDir
 
 # Create the trigger (daily at 2 AM)
 $trigger = New-ScheduledTaskTrigger -Daily -At 2am
@@ -53,7 +57,7 @@ $principal = New-ScheduledTaskPrincipal `
 # Register the task
 try {
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Daily processing of mobility assessment files from Google Drive"
-    Write-Host "✓ Task scheduled successfully!" -ForegroundColor Green
+    Write-Host "[OK] Task scheduled successfully!" -ForegroundColor Green
     Write-Host "Task Name: $taskName" -ForegroundColor Cyan
     Write-Host "Schedule: Daily at 2:00 AM" -ForegroundColor Cyan
     Write-Host "Run When Locked: YES (configured with S4U logon)" -ForegroundColor Cyan
@@ -68,7 +72,7 @@ try {
     Write-Host "  - Look for '$taskName' in the task list" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "To test the task immediately:" -ForegroundColor Yellow
-    Write-Host ("  Start-ScheduledTask -TaskName '{0}'" -f $taskName) -ForegroundColor Yellow
+    Write-Host "  Start-ScheduledTask -TaskName '$taskName'" -ForegroundColor Yellow
     Write-Host ""
     Write-Host 'Note: If the task fails to run when locked, check:' -ForegroundColor Yellow
     Write-Host '  1. Task Scheduler -> Task -> Properties -> General' -ForegroundColor Yellow

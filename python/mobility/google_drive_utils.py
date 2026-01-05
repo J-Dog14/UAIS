@@ -145,7 +145,9 @@ def extract_sheet_id_from_gsheet(gsheet_path: str) -> Optional[str]:
                     return parts[1].split('/')[0]
     
     except Exception as e:
-        print(f"Error reading .gsheet file {gsheet_path}: {e}")
+        # Don't print full path in error (might contain sensitive info or cause encoding issues)
+        file_name = os.path.basename(gsheet_path) if os.path.exists(gsheet_path) else "unknown"
+        print(f"   [WARN] Error reading .gsheet file {file_name}: {type(e).__name__}: {str(e)}")
     
     return None
 
@@ -255,7 +257,7 @@ def download_missing_sheets(
             'downloaded': 0,
             'failed': 0
         }
-    print("✓ Authentication successful")
+    print("[OK] Authentication successful")
     
     # Get list of existing Excel files
     excel_dir = Path(excel_directory)
@@ -310,7 +312,7 @@ def download_missing_sheets(
         # Extract sheet ID
         sheet_id = extract_sheet_id_from_gsheet(str(gsheet_file))
         if not sheet_id:
-            print(f"   ✗ Could not extract sheet ID from .gsheet file")
+            print(f"   [FAIL] Could not extract sheet ID from .gsheet file")
             failed += 1
             errors.append(f"{gsheet_file.name}: Could not extract sheet ID")
             continue
@@ -324,10 +326,10 @@ def download_missing_sheets(
         # Download
         print(f"   Downloading to: {output_filename}")
         if download_google_sheet_as_excel(creds, sheet_id, str(output_path)):
-            print(f"   ✓ Downloaded successfully")
+            print(f"   [OK] Downloaded successfully")
             downloaded += 1
         else:
-            print(f"   ✗ Download failed")
+            print(f"   [FAIL] Download failed")
             failed += 1
             errors.append(f"{gsheet_file.name}: Download failed")
     

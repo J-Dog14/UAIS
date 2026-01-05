@@ -39,6 +39,38 @@ except ImportError:
     GOOGLE_DRIVE_AVAILABLE = False
 
 
+def to_float_or_none(x: Any) -> Optional[float]:
+    """
+    Convert a value to float, or return None if it can't be converted.
+    
+    Handles:
+    - None -> None
+    - int/float -> float
+    - Empty strings, "N/A", "n/a", "null", "none", "-", "\\" -> None
+    - Valid numeric strings -> float
+    - Non-numeric strings -> None
+    
+    Args:
+        x: Value to convert
+        
+    Returns:
+        float value or None
+    """
+    if x is None:
+        return None
+    if isinstance(x, (int, float)):
+        return float(x)
+    
+    s = str(x).strip()
+    if s == "" or s.lower() in {"na", "n/a", "none", "null", "-", "\\", "null"}:
+        return None
+    
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
 def sanitize_column_name(name: str) -> str:
     """
     Sanitize a column name for use in SQL/Prisma.
@@ -259,21 +291,8 @@ def extract_assessment_data(ws) -> Dict[str, Any]:
                 col_name_sql = sanitize_column_name(col_name_clean)
                 
                 # Convert value to appropriate type
-                if value is None:
-                    metrics[col_name_sql] = None
-                elif isinstance(value, (int, float)):
-                    metrics[col_name_sql] = float(value)
-                else:
-                    # Try to convert string to number
-                    value_str = str(value).strip()
-                    if value_str == '' or value_str.lower() in ['n/a', 'na', 'null', 'none']:
-                        metrics[col_name_sql] = None
-                    else:
-                        try:
-                            metrics[col_name_sql] = float(value_str)
-                        except ValueError:
-                            # Keep as string if can't convert
-                            metrics[col_name_sql] = value_str
+                # Use numeric coercion helper - returns None for non-numeric strings
+                metrics[col_name_sql] = to_float_or_none(value)
         except Exception as e:
             # Skip this row if there's an error
             continue
@@ -321,7 +340,7 @@ def ensure_column_exists(conn, table_name: str, column_name: str, column_type: s
                     ADD COLUMN {column_name} {column_type}
                 """)
                 conn.commit()
-                print(f"   ✓ Added column {column_name} to {table_name}")
+                print(f"   [OK] Added column {column_name} to {table_name}")
             except Exception as e:
                 # Column might have been created by another process, check again
                 cur.execute("""
@@ -460,6 +479,9 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
     """
     Process a single mobility assessment Excel file or Google Sheet.
     
+    Uses per-file transaction: each file is processed in its own transaction
+    that auto-rolls back on error, preventing cascading failures.
+    
     Args:
         file_path: Path to Excel file or .gsheet file
         conn: PostgreSQL connection
@@ -470,13 +492,9 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
     file_name = os.path.basename(file_path)
     print(f"\nProcessing: {file_name}")
     
-    # Use savepoint for transaction management
-    savepoint_created = False
+    # Process each file in its own transaction
+    # This prevents cascading failures and removes savepoint complexity
     try:
-        # Create savepoint for this file
-        with conn.cursor() as sp_cur:
-            sp_cur.execute("SAVEPOINT file_processing")
-            savepoint_created = True
         # Check if it's a .gsheet file
         if file_path.lower().endswith('.gsheet'):
             print(f"   Detected .gsheet file (Google Sheets shortcut)")
@@ -488,11 +506,11 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
                 print(f"   Found Google Sheets URL, attempting to download...")
                 wb = load_google_sheet_from_url(gsheet_url)
                 if not wb:
-                    print(f"   ✗ Could not download Google Sheet. Please download as Excel (.xlsx) file.")
+                    print(f"   [FAIL] Could not download Google Sheet. Please download as Excel (.xlsx) file.")
                     print(f"   URL: {gsheet_url}")
                     return {'success': False, 'error': 'Could not download Google Sheet'}
             else:
-                print(f"   ✗ Could not extract Google Sheets URL from .gsheet file.")
+                print(f"   [FAIL] Could not extract Google Sheets URL from .gsheet file.")
                 print(f"   Please download the Google Sheet as an Excel (.xlsx) file to process it.")
                 return {'success': False, 'error': 'Could not extract Google Sheets URL'}
         else:
@@ -506,7 +524,7 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
         demo_data = extract_demographic_data(ws)
         
         if not demo_data.get('name'):
-            print(f"   ✗ Skipping {file_name} - no name found")
+            print(f"   [SKIP] Skipping {file_name} - no name found")
             return {'success': False, 'error': 'No name found'}
         
         name = demo_data['name']
@@ -518,7 +536,7 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
         medical_history = assessment_data['medical_history']
         
         if not metrics:
-            print(f"   ✗ Skipping {file_name} - no assessment metrics found")
+            print(f"   [SKIP] Skipping {file_name} - no assessment metrics found")
             return {'success': False, 'error': 'No assessment metrics found'}
         
         print(f"   Found {len(metrics)} assessment metrics")
@@ -537,7 +555,7 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
             check_app_db=True
         )
         
-        print(f"   ✓ Got/created athlete UUID: {athlete_uuid}")
+        print(f"   [OK] Got/created athlete UUID: {athlete_uuid}")
         
         # Update athlete data flag (before main insert to avoid transaction issues)
         try:
@@ -589,72 +607,66 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
         # Add all metrics
         insert_data.update(metrics)
         
-        # Check if record already exists (by athlete_uuid, session_date, and source_file)
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id FROM public.f_mobility
-                WHERE athlete_uuid = %s 
-                AND session_date = %s 
-                AND source_file = %s
-            """, (athlete_uuid, session_date, file_path))
-            
-            existing = cur.fetchone()
-            
-            if existing:
-                # Update existing record
-                set_parts = [f"{col} = %s" for col in insert_data.keys() if col != 'athlete_uuid']
-                update_values = [insert_data[col] for col in insert_data.keys() if col != 'athlete_uuid']
-                update_values.append(athlete_uuid)
-                update_values.append(session_date)
-                update_values.append(file_path)
-                
-                cur.execute(f"""
-                    UPDATE public.f_mobility
-                    SET {', '.join(set_parts)}
+        # Process file in its own transaction
+        # This ensures that if one file fails, it doesn't affect others
+        try:
+            with conn.cursor() as cur:
+                # Check if record already exists (by athlete_uuid, session_date, and source_file)
+                cur.execute("""
+                    SELECT id FROM public.f_mobility
                     WHERE athlete_uuid = %s 
                     AND session_date = %s 
                     AND source_file = %s
-                """, update_values)
+                """, (athlete_uuid, session_date, file_path))
                 
-                conn.commit()
-                print(f"   ✓ Updated existing record")
-                return {'success': True, 'action': 'updated', 'athlete_uuid': athlete_uuid}
-            else:
-                # Insert new record
-                cols = list(insert_data.keys())
-                placeholders = ', '.join(['%s'] * len(cols))
-                col_names = ', '.join(cols)
+                existing = cur.fetchone()
                 
-                cur.execute(f"""
-                    INSERT INTO public.f_mobility ({col_names})
-                    VALUES ({placeholders})
-                """, list(insert_data.values()))
-                
-                conn.commit()
-                print(f"   ✓ Inserted new record")
-                
-                # Release savepoint
-                if savepoint_created:
-                    with conn.cursor() as sp_cur:
-                        sp_cur.execute("RELEASE SAVEPOINT file_processing")
-                
-                return {'success': True, 'action': 'inserted', 'athlete_uuid': athlete_uuid}
+                if existing:
+                    # Update existing record
+                    set_parts = [f"{col} = %s" for col in insert_data.keys() if col != 'athlete_uuid']
+                    update_values = [insert_data[col] for col in insert_data.keys() if col != 'athlete_uuid']
+                    update_values.append(athlete_uuid)
+                    update_values.append(session_date)
+                    update_values.append(file_path)
+                    
+                    cur.execute(f"""
+                        UPDATE public.f_mobility
+                        SET {', '.join(set_parts)}
+                        WHERE athlete_uuid = %s 
+                        AND session_date = %s 
+                        AND source_file = %s
+                    """, update_values)
+                    
+                    conn.commit()
+                    print(f"   [OK] Updated existing record")
+                    return {'success': True, 'action': 'updated', 'athlete_uuid': athlete_uuid}
+                else:
+                    # Insert new record
+                    cols = list(insert_data.keys())
+                    placeholders = ', '.join(['%s'] * len(cols))
+                    col_names = ', '.join(cols)
+                    
+                    cur.execute(f"""
+                        INSERT INTO public.f_mobility ({col_names})
+                        VALUES ({placeholders})
+                    """, list(insert_data.values()))
+                    
+                    conn.commit()
+                    print(f"   [OK] Inserted new record")
+                    return {'success': True, 'action': 'inserted', 'athlete_uuid': athlete_uuid}
+        
+        except Exception as e:
+            # Rollback transaction on error
+            try:
+                conn.rollback()
+            except:
+                pass
+            raise
         
     except Exception as e:
-        # Rollback to savepoint on error
-        if savepoint_created:
-            try:
-                with conn.cursor() as sp_cur:
-                    sp_cur.execute("ROLLBACK TO SAVEPOINT file_processing")
-                    sp_cur.execute("RELEASE SAVEPOINT file_processing")
-            except Exception as sp_error:
-                # If savepoint rollback fails, rollback entire transaction
-                try:
-                    conn.rollback()
-                except:
-                    pass
+        # Transaction already rolled back in inner try/except
         
-        print(f"   ✗ Error processing {file_name}: {str(e)}")
+        print(f"   [ERROR] Error processing {file_name}: {str(e)}")
         import traceback
         traceback.print_exc()
         return {'success': False, 'error': str(e)}
@@ -831,15 +843,25 @@ def process_mobility_directory(directory_path: str):
         except Exception as e:
             logger.warning(f"Could not update athlete flags: {e}")
         
-        # Check for duplicate athletes and prompt to merge
+        # Check for duplicate athletes
+        # In automated runs, use auto_skip=True to avoid blocking on user input
         if processed:
             logger.info("")
-            logger.info("Checking for similar athlete names...")
+            is_automated = os.getenv('AUTOMATED_RUN') == '1'
+            if is_automated:
+                logger.info("Checking for similar athlete names (auto-skip mode - no interactive prompts)...")
+            else:
+                logger.info("Checking for similar athlete names...")
             try:
                 # Extract unique athlete UUIDs from processed results
                 processed_uuids = list(set([r.get('athlete_uuid') for r in processed if r.get('success') and r.get('athlete_uuid')]))
                 if processed_uuids:
-                    check_and_merge_duplicates(conn=conn, athlete_uuids=processed_uuids, min_similarity=0.80)
+                    check_and_merge_duplicates(
+                        conn=conn, 
+                        athlete_uuids=processed_uuids, 
+                        min_similarity=0.80,
+                        auto_skip=is_automated  # Skip interactive prompts in automated mode
+                    )
             except Exception as e:
                 logger.warning(f"Could not check for duplicates: {str(e)}")
                 import traceback
@@ -867,7 +889,6 @@ def process_mobility_directory(directory_path: str):
 
 def setup_logging():
     """Set up logging to both console and file."""
-    import logging
     from pathlib import Path
     from datetime import datetime
     
@@ -908,14 +929,61 @@ def main():
     logger.info(f"Script location: {Path(__file__).parent}")
     logger.info("")
     
-    # Paths
-    excel_directory = r"D:\Mobility Assessments"
-    gsheet_directory = r"G:\My Drive\Data\Mobility Assessments"
+    # Get paths from config (preferred) or use defaults
+    # This avoids drive-letter dependencies that fail in Task Scheduler
+    try:
+        raw_paths = get_raw_paths()
+        excel_directory = raw_paths.get('mobility', r"D:\Mobility Assessments")
+        # Try to find Google Drive local path (not mapped drive G:\)
+        # Common locations: C:\Users\<user>\My Drive, C:\Users\<user>\Google Drive, etc.
+        gsheet_directory = raw_paths.get('mobility_gsheet', None)
+        if not gsheet_directory:
+            # Try common Google Drive local paths
+            user_home = Path.home()
+            possible_paths = [
+                user_home / "My Drive" / "Data" / "Mobility Assessments",
+                user_home / "Google Drive" / "Data" / "Mobility Assessments",
+                user_home / "OneDrive" / "My Drive" / "Data" / "Mobility Assessments",
+            ]
+            # Also try AppData location for DriveFS
+            appdata_local = Path(os.environ.get('LOCALAPPDATA', ''))
+            if appdata_local:
+                drivefs_path = appdata_local / "Google" / "DriveFS"
+                if drivefs_path.exists():
+                    # Find the user's DriveFS folder (usually has a long ID)
+                    for item in drivefs_path.iterdir():
+                        if item.is_dir():
+                            possible_paths.append(item / "My Drive" / "Data" / "Mobility Assessments")
+            
+            # Use first path that exists, or fall back to G:\ if none found
+            gsheet_directory = None
+            for path in possible_paths:
+                if path.exists():
+                    gsheet_directory = str(path)
+                    logger.info(f"Found Google Drive path: {gsheet_directory}")
+                    break
+            
+            if not gsheet_directory:
+                # Fall back to mapped drive (may not work in Task Scheduler)
+                gsheet_directory = r"G:\My Drive\Data\Mobility Assessments"
+                logger.warning(f"Using mapped drive path (may not work in Task Scheduler): {gsheet_directory}")
+    except Exception as e:
+        logger.warning(f"Could not load paths from config: {e}")
+        excel_directory = r"D:\Mobility Assessments"
+        gsheet_directory = r"G:\My Drive\Data\Mobility Assessments"
+    
     credentials_path = project_root / "config" / "client_secret_414564039392-jrmaopurbrsv91gjffc59v8cndv3e58q.apps.googleusercontent.com.json"
     
-    # Normalize paths
-    excel_directory = os.path.abspath(excel_directory)
-    gsheet_directory = os.path.abspath(gsheet_directory)
+    # Normalize paths (convert to absolute, but don't fail if drive doesn't exist)
+    try:
+        excel_directory = os.path.abspath(excel_directory)
+    except:
+        pass  # Keep original if abspath fails
+    
+    try:
+        gsheet_directory = os.path.abspath(gsheet_directory) if gsheet_directory else None
+    except:
+        gsheet_directory = None  # Will be skipped if path doesn't exist
     
     # Check if Excel directory exists, create if not
     if not os.path.exists(excel_directory):
@@ -935,15 +1003,15 @@ def main():
         )
         
         if download_result.get('success'):
-            logger.info(f"✓ Downloaded {download_result.get('downloaded', 0)} files")
+            logger.info(f"[OK] Downloaded {download_result.get('downloaded', 0)} files")
             if download_result.get('failed', 0) > 0:
-                logger.warning(f"✗ Failed to download {download_result.get('failed', 0)} files")
+                logger.warning(f"[FAIL] Failed to download {download_result.get('failed', 0)} files")
                 if download_result.get('errors'):
                     logger.warning("Errors:")
                     for error in download_result['errors'][:10]:  # Show first 10
                         logger.warning(f"  - {error}")
         else:
-            logger.warning(f"✗ Download step failed: {download_result.get('error', 'Unknown error')}")
+            logger.warning(f"[FAIL] Download step failed: {download_result.get('error', 'Unknown error')}")
             logger.info("Continuing with existing Excel files...")
     else:
         if not GOOGLE_DRIVE_AVAILABLE:
