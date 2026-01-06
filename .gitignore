@@ -39,6 +39,13 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 
+# Database backup files (keep schema/migration files in sql/ and prisma/)
+*.sql.gz
+*.db.gz
+backups/
+*.backup
+*.dump
+
 # Secrets and credentials
 .env
 config/client_secret_*.json
