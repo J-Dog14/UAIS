@@ -21,8 +21,12 @@ if ($existingTask) {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
 }
 
-# Create the action (run the batch file)
-$action = New-ScheduledTaskAction -Execute $scriptPath -WorkingDirectory $workingDir
+# Create the action (run the batch file via cmd.exe for more reliable execution)
+# Using cmd.exe /c ensures proper quoting and environment handling in Task Scheduler
+$action = New-ScheduledTaskAction `
+    -Execute "cmd.exe" `
+    -Argument "/c `"$scriptPath`"" `
+    -WorkingDirectory $workingDir
 
 # Create the trigger (daily at 2:30 AM - 30 min after mobility)
 $trigger = New-ScheduledTaskTrigger -Daily -At 2:30am
@@ -45,7 +49,7 @@ $principal = New-ScheduledTaskPrincipal `
 # Register the task
 try {
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Daily processing of Proteus data: download CSV from portal and ingest into database"
-    Write-Host "✓ Task scheduled successfully!" -ForegroundColor Green
+    Write-Host "[OK] Task scheduled successfully!" -ForegroundColor Green
     Write-Host "Task Name: $taskName" -ForegroundColor Cyan
     Write-Host "Schedule: Daily at 2:30 AM" -ForegroundColor Cyan
     Write-Host "Run When Locked: YES" -ForegroundColor Cyan

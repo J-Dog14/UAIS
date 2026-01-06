@@ -127,7 +127,7 @@ def restore_postgres_db(db_name: str, db_config: Dict[str, Any], backup_file: Pa
                 check=True
             )
         
-        print(f"  ✓ Database restored successfully!")
+        print(f"  [OK] Database restored successfully!")
         
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"Restore failed: {e}")
@@ -167,7 +167,7 @@ def restore_sqlite_db(db_name: str, db_path: str, backup_file: Path):
         else:
             shutil.copy2(backup_file, target_path)
         
-        print(f"  ✓ Database restored successfully!")
+        print(f"  [OK] Database restored successfully!")
         print(f"  Location: {target_path}")
         
     except Exception as e:

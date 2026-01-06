@@ -427,6 +427,8 @@ def create_athlete_in_warehouse(
                 logger.info(f"Generated new UUID for {name}: {athlete_uuid}")
         
         with conn.cursor() as cur:
+            # Use UPSERT to handle duplicate UUIDs gracefully
+            # This prevents "duplicate key value violates unique constraint" errors
             cur.execute('''
                 INSERT INTO analytics.d_athletes (
                     athlete_uuid, name, normalized_name,
@@ -436,6 +438,24 @@ def create_athlete_in_warehouse(
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
                 )
+                ON CONFLICT (athlete_uuid) 
+                DO UPDATE SET
+                    name = COALESCE(EXCLUDED.name, analytics.d_athletes.name),
+                    normalized_name = COALESCE(EXCLUDED.normalized_name, analytics.d_athletes.normalized_name),
+                    date_of_birth = COALESCE(EXCLUDED.date_of_birth, analytics.d_athletes.date_of_birth),
+                    age = COALESCE(EXCLUDED.age, analytics.d_athletes.age),
+                    age_at_collection = COALESCE(EXCLUDED.age_at_collection, analytics.d_athletes.age_at_collection),
+                    gender = COALESCE(EXCLUDED.gender, analytics.d_athletes.gender),
+                    height = COALESCE(EXCLUDED.height, analytics.d_athletes.height),
+                    weight = COALESCE(EXCLUDED.weight, analytics.d_athletes.weight),
+                    notes = COALESCE(EXCLUDED.notes, analytics.d_athletes.notes),
+                    source_system = COALESCE(EXCLUDED.source_system, analytics.d_athletes.source_system),
+                    source_athlete_id = COALESCE(EXCLUDED.source_athlete_id, analytics.d_athletes.source_athlete_id),
+                    app_db_uuid = COALESCE(EXCLUDED.app_db_uuid, analytics.d_athletes.app_db_uuid),
+                    app_db_synced_at = CASE 
+                        WHEN EXCLUDED.app_db_uuid IS NOT NULL THEN NOW()
+                        ELSE analytics.d_athletes.app_db_synced_at
+                    END
             ''', (
                 athlete_uuid, name, normalized_name,
                 date_of_birth, age, age_at_collection,
@@ -444,13 +464,14 @@ def create_athlete_in_warehouse(
             ))
             
             conn.commit()
-            logger.info(f"Created new athlete in warehouse: {name} ({athlete_uuid})")
+            logger.info(f"Created/updated athlete in warehouse: {name} ({athlete_uuid})")
             
             return athlete_uuid
             
     except psycopg2.IntegrityError as e:
-        # Handle unique constraint violation
-        if 'unique_normalized_name' in str(e):
+        # Handle unique constraint violation (for normalized_name or other constraints)
+        error_str = str(e)
+        if 'unique_normalized_name' in error_str or 'normalized_name' in error_str:
             # Try to get the existing athlete
             existing = get_athlete_from_warehouse(normalized_name, conn)
             if existing:
@@ -459,6 +480,20 @@ def create_athlete_in_warehouse(
                     f"{existing['name']} ({existing['athlete_uuid']}). "
                     f"Use get_or_create_athlete() instead of create_athlete_in_warehouse()."
                 )
+        # For athlete_uuid conflicts, the UPSERT should have handled it, but if it still fails:
+        if 'd_athletes_pkey' in error_str or 'athlete_uuid' in error_str:
+            # Try to get existing athlete by UUID
+            try:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute('''
+                        SELECT * FROM analytics.d_athletes WHERE athlete_uuid = %s
+                    ''', (athlete_uuid,))
+                    existing = cur.fetchone()
+                    if existing:
+                        logger.warning(f"Athlete with UUID {athlete_uuid} already exists: {existing['name']}")
+                        return athlete_uuid  # Return existing UUID
+            except:
+                pass
         raise
             
     finally:

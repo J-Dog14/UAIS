@@ -133,7 +133,7 @@ def check_database(db_name: str, db_config: Dict[str, Any], show_tables: bool = 
         conn.close()
         
     except psycopg2.Error as e:
-        print(f"  ✗ Error connecting to {db_name}: {e}")
+        print(f"  [ERROR] Error connecting to {db_name}: {e}")
         return None
     
     return db_size
@@ -204,13 +204,13 @@ def main():
     if total_size > 0:
         print(f"\nSize Recommendations:")
         if total_size < 100 * 1024 * 1024:  # < 100 MB
-            print("  ✓ Small database - Free tier on most cloud providers (0.5-1 GB)")
+            print("  [OK] Small database - Free tier on most cloud providers (0.5-1 GB)")
         elif total_size < 1024 * 1024 * 1024:  # < 1 GB
-            print("  ✓ Medium database - Most free tiers, or ~$10-20/month")
+            print("  [OK] Medium database - Most free tiers, or ~$10-20/month")
         elif total_size < 10 * 1024 * 1024 * 1024:  # < 10 GB
-            print("  ⚠ Large database - Consider paid tier (~$20-50/month)")
+            print("  [WARNING] Large database - Consider paid tier (~$20-50/month)")
         else:
-            print("  ⚠ Very large database - May need dedicated instance")
+            print("  [WARNING] Very large database - May need dedicated instance")
 
 
 if __name__ == "__main__":

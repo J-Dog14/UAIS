@@ -45,6 +45,40 @@ def run_daily_proteus_job() -> None:
     start_date, end_date = get_date_range()
     logger.info(f"Date range: {start_date} to {end_date}")
     
+    # Check network connectivity before launching browser
+    # This is especially important for scheduled tasks that may run when network isn't ready
+    import socket
+    import time
+    
+    def check_network_connectivity(hostname: str = "kiosk.proteusmotion.com", max_retries: int = 3, retry_delay: int = 10) -> bool:
+        """Check if network is available by resolving DNS and checking connectivity."""
+        for attempt in range(max_retries):
+            try:
+                # Try to resolve DNS
+                socket.gethostbyname(hostname)
+                logger.info(f"Network connectivity check passed (attempt {attempt + 1}/{max_retries})")
+                return True
+            except socket.gaierror as e:
+                logger.warning(f"Network connectivity check failed (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Waiting {retry_delay} seconds before retry...")
+                    time.sleep(retry_delay)
+                else:
+                    logger.error(f"Network connectivity check failed after {max_retries} attempts")
+                    logger.error("Possible causes:")
+                    logger.error("  - Computer just woke from sleep (network adapter not ready)")
+                    logger.error("  - No internet connection")
+                    logger.error("  - DNS server not available")
+                    logger.error("  - Firewall blocking DNS resolution")
+                    return False
+        return False
+    
+    # Check network before proceeding
+    if not check_network_connectivity():
+        logger.error("Network not available. Aborting Proteus job.")
+        logger.error("The scheduled task will retry later (if configured).")
+        return
+    
     # Launch browser
     headless_mode = is_headless()
     logger.info("Launching browser...")
@@ -84,7 +118,7 @@ def run_daily_proteus_job() -> None:
                     start_date=start_date,
                     end_date=end_date
                 )
-                logger.info(f"✓ Downloaded CSV: {csv_path}")
+                logger.info(f"[OK] Downloaded CSV: {csv_path}")
             except Exception as e:
                 logger.error(f"Failed to download CSV: {e}", exc_info=True)
                 return
@@ -99,7 +133,7 @@ def run_daily_proteus_job() -> None:
                 inbox_path = inbox_dir / f"{name_parts[0]}_{timestamp}{name_parts[1]}"
             
             shutil.move(str(csv_path), str(inbox_path))
-            logger.info(f"✓ Moved CSV to inbox: {inbox_path}")
+            logger.info(f"[OK] Moved CSV to inbox: {inbox_path}")
             
         finally:
             context.close()
@@ -110,13 +144,13 @@ def run_daily_proteus_job() -> None:
         try:
             from proteus.etl_proteus import run_daily_proteus_ingest
             run_daily_proteus_ingest(inbox_dir=inbox_dir, archive_dir=archive_dir)
-            logger.info("✓ ETL processing complete")
+            logger.info("[OK] ETL processing complete")
         except ImportError:
             # Fallback to existing ETL if new function doesn't exist
             logger.info("Using existing ETL function...")
             from proteus.etl_proteus import etl_proteus
             etl_proteus()
-            logger.info("✓ ETL processing complete")
+            logger.info("[OK] ETL processing complete")
         except Exception as e:
             logger.error(f"ETL processing failed: {e}", exc_info=True)
             raise

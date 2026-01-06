@@ -931,9 +931,17 @@ def main():
     
     # Get paths from config (preferred) or use defaults
     # This avoids drive-letter dependencies that fail in Task Scheduler
+    # For mobility, we primarily use Google Drive, so local Excel directory is just a cache
     try:
         raw_paths = get_raw_paths()
-        excel_directory = raw_paths.get('mobility', r"D:\Mobility Assessments")
+        excel_directory = raw_paths.get('mobility', None)
+        
+        # If not in config, use a local path (not D:\ which may be a remote drive)
+        if not excel_directory:
+            # Use a local path that will always exist
+            local_cache = project_root / "data" / "mobility_cache"
+            excel_directory = str(local_cache)
+            logger.info(f"No mobility path in config, using local cache: {excel_directory}")
         # Try to find Google Drive local path (not mapped drive G:\)
         # Common locations: C:\Users\<user>\My Drive, C:\Users\<user>\Google Drive, etc.
         gsheet_directory = raw_paths.get('mobility_gsheet', None)
@@ -969,16 +977,55 @@ def main():
                 logger.warning(f"Using mapped drive path (may not work in Task Scheduler): {gsheet_directory}")
     except Exception as e:
         logger.warning(f"Could not load paths from config: {e}")
-        excel_directory = r"D:\Mobility Assessments"
+        # Use local cache directory instead of D:\ (which may be remote/unavailable)
+        local_cache = project_root / "data" / "mobility_cache"
+        excel_directory = str(local_cache)
         gsheet_directory = r"G:\My Drive\Data\Mobility Assessments"
     
     credentials_path = project_root / "config" / "client_secret_414564039392-jrmaopurbrsv91gjffc59v8cndv3e58q.apps.googleusercontent.com.json"
     
     # Normalize paths (convert to absolute, but don't fail if drive doesn't exist)
+    # Check if drive exists before trying to use it
+    def check_drive_exists(path: str) -> bool:
+        """Check if the drive letter in a path exists."""
+        if len(path) >= 2 and path[1] == ':':
+            drive = path[0:2]
+            import string
+            if drive[0].upper() in string.ascii_uppercase:
+                # Check if drive exists
+                import subprocess
+                try:
+                    result = subprocess.run(['cmd', '/c', f'if exist {drive}\\ nul echo exists'], 
+                                           capture_output=True, timeout=2, shell=False)
+                    return b'exists' in result.stdout
+                except:
+                    # Fallback: try to access the drive
+                    try:
+                        os.listdir(drive + '\\')
+                        return True
+                    except:
+                        return False
+        return True  # Not a drive letter path, assume it exists
+    
+    # Check if Excel directory drive exists (if it's a drive letter path)
+    # If the drive doesn't exist, fall back to local cache directory
+    if excel_directory and len(excel_directory) >= 2 and excel_directory[1] == ':':
+        if not check_drive_exists(excel_directory):
+            logger.warning(f"Drive for path does not exist: {excel_directory}")
+            logger.warning("Falling back to local cache directory (Google Drive is the primary source anyway)")
+            # Use local cache directory instead
+            local_cache = project_root / "data" / "mobility_cache"
+            excel_directory = str(local_cache)
+            logger.info(f"Using local cache directory: {excel_directory}")
+    
     try:
         excel_directory = os.path.abspath(excel_directory)
-    except:
-        pass  # Keep original if abspath fails
+    except Exception as e:
+        logger.error(f"Could not resolve absolute path for {excel_directory}: {e}")
+        # Fall back to local cache
+        local_cache = project_root / "data" / "mobility_cache"
+        excel_directory = str(local_cache)
+        logger.info(f"Falling back to local cache: {excel_directory}")
     
     try:
         gsheet_directory = os.path.abspath(gsheet_directory) if gsheet_directory else None
@@ -986,9 +1033,19 @@ def main():
         gsheet_directory = None  # Will be skipped if path doesn't exist
     
     # Check if Excel directory exists, create if not
+    # This is just a cache directory for downloaded files, so it's safe to create locally
     if not os.path.exists(excel_directory):
-        logger.info(f"Creating directory: {excel_directory}")
-        os.makedirs(excel_directory, exist_ok=True)
+        logger.info(f"Creating local cache directory: {excel_directory}")
+        try:
+            os.makedirs(excel_directory, exist_ok=True)
+        except Exception as e:
+            logger.error(f"Failed to create directory {excel_directory}: {e}")
+            # Try one more fallback - use system temp directory
+            import tempfile
+            temp_dir = Path(tempfile.gettempdir()) / "mobility_cache"
+            excel_directory = str(temp_dir)
+            logger.warning(f"Using system temp directory as fallback: {excel_directory}")
+            os.makedirs(excel_directory, exist_ok=True)
     
     # Step 1: Download missing Google Sheets as Excel files
     if GOOGLE_DRIVE_AVAILABLE and os.path.exists(gsheet_directory) and credentials_path.exists():

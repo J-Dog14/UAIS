@@ -256,7 +256,7 @@ def process_proteus_file(file_path: Path, conn) -> list:
         engine = get_warehouse_engine()
         logger.info(f"Writing {len(clean_df_renamed)} rows to database...")
         write_df(clean_df_renamed, 'f_proteus', engine, if_exists='append')
-        logger.info(f"✓ Data written successfully")
+        logger.info(f"[OK] Data written successfully")
         
         # Update athlete flags
         processed_uuids = []
@@ -270,7 +270,7 @@ def process_proteus_file(file_path: Path, conn) -> list:
                 except:
                     pass
         
-        logger.info(f"✓ Processed {len(clean_df)} rows from {file_path.name}")
+        logger.info(f"[OK] Processed {len(clean_df)} rows from {file_path.name}")
         return processed_uuids  # Return processed UUIDs instead of True
         
     except Exception as e:
@@ -376,7 +376,7 @@ def run_daily_proteus_ingest(inbox_dir: Optional[Path] = None, archive_dir: Opti
                     archive_path = archive_dir / f"{file_path.stem}_{timestamp}{file_path.suffix}"
                 
                 shutil.move(str(file_path), str(archive_path))
-                logger.info(f"✓ Archived: {archive_path.name}")
+                logger.info(f"[OK] Archived: {archive_path.name}")
                 processed_count += 1
                 # Collect UUIDs from processed file
                 if isinstance(result, list):
@@ -393,13 +393,23 @@ def run_daily_proteus_ingest(inbox_dir: Optional[Path] = None, archive_dir: Opti
         except Exception as e:
             logger.warning(f"Could not update athlete flags: {e}")
         
-        # Check for duplicate athletes and prompt to merge
+        # Check for duplicate athletes
+        # In automated runs, use auto_skip=True to avoid blocking on user input
         if all_processed_uuids:
             # Remove duplicates from UUID list
             unique_processed_uuids = list(set(all_processed_uuids))
             try:
-                logger.info("Checking for similar athlete names...")
-                check_and_merge_duplicates(conn=conn, athlete_uuids=unique_processed_uuids, min_similarity=0.80)
+                is_automated = os.getenv('AUTOMATED_RUN') == '1'
+                if is_automated:
+                    logger.info("Checking for similar athlete names (auto-skip mode - no interactive prompts)...")
+                else:
+                    logger.info("Checking for similar athlete names...")
+                check_and_merge_duplicates(
+                    conn=conn, 
+                    athlete_uuids=unique_processed_uuids, 
+                    min_similarity=0.80,
+                    auto_skip=is_automated  # Skip interactive prompts in automated mode
+                )
             except Exception as e:
                 logger.warning(f"Could not check for duplicates: {str(e)}")
         

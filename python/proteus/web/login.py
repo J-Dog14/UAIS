@@ -40,7 +40,16 @@ def login_to_proteus(page: Page) -> bool:
         logger.error("  - Check if you can access https://kiosk.proteusmotion.com/login in your browser")
         return False
     except Exception as e:
-        logger.error(f"Error loading login page: {e}")
+        error_str = str(e)
+        if "ERR_NAME_NOT_RESOLVED" in error_str or "net::ERR" in error_str:
+            logger.error(f"Network error loading login page: {e}")
+            logger.error("This usually means:")
+            logger.error("  - DNS resolution failed (network not ready)")
+            logger.error("  - No internet connection")
+            logger.error("  - Computer may have just woken from sleep")
+            logger.error("  - Try running the task again in a few minutes")
+        else:
+            logger.error(f"Error loading login page: {e}")
         return False
     
     # Wait for login form to be visible

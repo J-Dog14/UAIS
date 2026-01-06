@@ -135,7 +135,7 @@ def backup_postgres_db(db_name: str, db_config: Dict[str, Any],
                 )
         
         file_size = backup_file.stat().st_size / (1024 * 1024)  # MB
-        print(f"  ✓ Backup created: {backup_file.name} ({file_size:.2f} MB)")
+        print(f"  [OK] Backup created: {backup_file.name} ({file_size:.2f} MB)")
         return backup_file
         
     except subprocess.CalledProcessError as e:
@@ -186,7 +186,7 @@ def backup_sqlite_db(db_name: str, db_path: str, backup_dir: Path,
         shutil.copy2(source_path, backup_file)
     
     file_size = backup_file.stat().st_size / (1024 * 1024)  # MB
-    print(f"  ✓ Backup created: {backup_file.name} ({file_size:.2f} MB)")
+    print(f"  [OK] Backup created: {backup_file.name} ({file_size:.2f} MB)")
     return backup_file
 
 
@@ -218,6 +218,9 @@ def main():
                        help='Keep only the last N backups per database (0 = keep all)')
     parser.add_argument('--output-dir', type=str, default=None,
                        help='Custom backup directory (default: backups/ in project root)')
+    parser.add_argument('--source', type=str, default='auto',
+                       choices=['auto', 'local', 'cloud'],
+                       help='Backup source: auto (detect), local (config), or cloud (env vars)')
     args = parser.parse_args()
     
     # Setup backup directory
@@ -246,25 +249,33 @@ def main():
     backed_up = []
     errors = []
     
-    # Backup configured databases
-    for db_name, db_config in databases.items():
-        try:
-            if 'postgres' in db_config:
-                backup_file = backup_postgres_db(db_name, db_config, backup_dir, args.compress)
-                backed_up.append((db_name, backup_file))
-                
-                if args.keep > 0:
-                    cleanup_old_backups(backup_dir, db_name, args.keep)
+    # Check for cloud databases
+    if args.source == 'cloud':
+        print("Note: For cloud database backups, use:")
+        print("  python python/scripts/backup_cloud_databases.py")
+        print("This script backs up local databases from config file.")
+        return
+    
+    # Backup configured databases (local)
+    if args.source in ['auto', 'local']:
+        for db_name, db_config in databases.items():
+            try:
+                if 'postgres' in db_config:
+                    backup_file = backup_postgres_db(db_name, db_config, backup_dir, args.compress)
+                    backed_up.append((db_name, backup_file))
                     
-            elif 'sqlite' in db_config:
-                backup_file = backup_sqlite_db(db_name, db_config['sqlite'], backup_dir, args.compress)
-                backed_up.append((db_name, backup_file))
-                
-                if args.keep > 0:
-                    cleanup_old_backups(backup_dir, db_name, args.keep)
-        except Exception as e:
-            print(f"  ✗ Error backing up {db_name}: {e}")
-            errors.append((db_name, str(e)))
+                    if args.keep > 0:
+                        cleanup_old_backups(backup_dir, db_name, args.keep)
+                        
+                elif 'sqlite' in db_config:
+                    backup_file = backup_sqlite_db(db_name, db_config['sqlite'], backup_dir, args.compress)
+                    backed_up.append((db_name, backup_file))
+                    
+                    if args.keep > 0:
+                        cleanup_old_backups(backup_dir, db_name, args.keep)
+            except Exception as e:
+                print(f"  [ERROR] Error backing up {db_name}: {e}")
+                errors.append((db_name, str(e)))
     
     # Backup source databases (SQLite files)
     for db_name, db_path in source_databases.items():
@@ -275,7 +286,7 @@ def main():
             if args.keep > 0:
                 cleanup_old_backups(backup_dir, f"source_{db_name}", args.keep)
         except Exception as e:
-            print(f"  ✗ Error backing up source database {db_name}: {e}")
+            print(f"  [ERROR] Error backing up source database {db_name}: {e}")
             errors.append((f"source_{db_name}", str(e)))
     
     # Summary
@@ -283,9 +294,13 @@ def main():
     print(f"Backup complete!")
     print(f"  Successfully backed up: {len(backed_up)} database(s)")
     if errors:
-        print(f"  Errors: {len(errors)} database(s)")
+        print(f"  Warnings/Errors: {len(errors)} database(s)")
         for db_name, error in errors:
-            print(f"    - {db_name}: {error}")
+            # Check if it's a "does not exist" error (common and usually fine)
+            if "does not exist" in error.lower():
+                print(f"    - {db_name}: Database not found (this is OK if database doesn't exist)")
+            else:
+                print(f"    - {db_name}: {error}")
     
     # Write backup log
     log_file = backup_dir / "backup_log.txt"

@@ -69,6 +69,20 @@ def get_app_engine(read_only: bool = False):
         return engine
     elif 'postgres' in app_config:
         pg = app_config['postgres']
+        
+        # Check for environment variable first (for cloud databases)
+        env_conn_str = os.environ.get('APP_DATABASE_URL')
+        if env_conn_str:
+            # Use connection string from environment (cloud database)
+            return create_engine(env_conn_str, echo=False, pool_pre_ping=True, 
+                               connect_args={'sslmode': 'require'} if 'sslmode=require' in env_conn_str else {})
+        
+        # Check for connection_string in config (alternative format)
+        if 'connection_string' in pg:
+            return create_engine(pg['connection_string'], echo=False, pool_pre_ping=True,
+                               connect_args={'sslmode': 'require'} if 'sslmode=require' in pg['connection_string'] else {})
+        
+        # Build from individual fields (local database)
         conn_str = f"postgresql://{pg['user']}:{pg['password']}@{pg['host']}:{pg['port']}/{pg['database']}"
         # Postgres handles concurrent access natively, no special settings needed
         return create_engine(conn_str, echo=False, pool_pre_ping=True)
@@ -104,6 +118,20 @@ def get_warehouse_engine():
         return engine
     elif 'postgres' in warehouse_config:
         pg = warehouse_config['postgres']
+        
+        # Check for environment variable first (for cloud databases)
+        env_conn_str = os.environ.get('WAREHOUSE_DATABASE_URL')
+        if env_conn_str:
+            # Use connection string from environment (cloud database)
+            return create_engine(env_conn_str, echo=False, pool_pre_ping=True,
+                               connect_args={'sslmode': 'require'} if 'sslmode=require' in env_conn_str else {})
+        
+        # Check for connection_string in config (alternative format)
+        if 'connection_string' in pg:
+            return create_engine(pg['connection_string'], echo=False, pool_pre_ping=True,
+                               connect_args={'sslmode': 'require'} if 'sslmode=require' in pg['connection_string'] else {})
+        
+        # Build from individual fields (local database)
         conn_str = f"postgresql://{pg['user']}:{pg['password']}@{pg['host']}:{pg['port']}/{pg['database']}"
         return create_engine(conn_str, echo=False, pool_pre_ping=True)
     else:

@@ -54,6 +54,16 @@ def get_proteus_inbox_dir() -> Path:
     """Get inbox directory where CSVs should be placed for ETL processing."""
     inbox_dir = os.getenv("PROTEUS_ETL_INBOX_DIR")
     if inbox_dir:
+        # Check if drive exists if it's a drive letter path
+        if len(inbox_dir) >= 2 and inbox_dir[1] == ':':
+            drive = inbox_dir[0:2]
+            try:
+                os.listdir(drive + '\\')
+            except:
+                # Drive doesn't exist, fall through to local path
+                inbox_dir = None
+    
+    if inbox_dir:
         return Path(inbox_dir)
     
     # Default to proteus raw data path from config
@@ -62,13 +72,23 @@ def get_proteus_inbox_dir() -> Path:
         paths = get_raw_paths()
         proteus_path = paths.get('proteus')
         if proteus_path:
-            inbox = Path(proteus_path) / "inbox"
-            inbox.mkdir(parents=True, exist_ok=True)
-            return inbox
+            # Check if drive exists
+            if len(proteus_path) >= 2 and proteus_path[1] == ':':
+                drive = proteus_path[0:2]
+                try:
+                    os.listdir(drive + '\\')
+                except:
+                    # Drive doesn't exist, fall through to local path
+                    proteus_path = None
+            
+            if proteus_path:
+                inbox = Path(proteus_path) / "inbox"
+                inbox.mkdir(parents=True, exist_ok=True)
+                return inbox
     except:
         pass
     
-    # Fallback to project directory
+    # Fallback to project directory (always available)
     project_root = Path(__file__).parent.parent.parent.parent
     inbox = project_root / "data" / "proteus" / "inbox"
     inbox.mkdir(parents=True, exist_ok=True)
@@ -79,6 +99,16 @@ def get_proteus_archive_dir() -> Path:
     """Get archive directory where processed CSVs should be moved."""
     archive_dir = os.getenv("PROTEUS_ETL_ARCHIVE_DIR")
     if archive_dir:
+        # Check if drive exists if it's a drive letter path
+        if len(archive_dir) >= 2 and archive_dir[1] == ':':
+            drive = archive_dir[0:2]
+            try:
+                os.listdir(drive + '\\')
+            except:
+                # Drive doesn't exist, fall through to local path
+                archive_dir = None
+    
+    if archive_dir:
         return Path(archive_dir)
     
     # Default to proteus raw data path from config
@@ -87,13 +117,23 @@ def get_proteus_archive_dir() -> Path:
         paths = get_raw_paths()
         proteus_path = paths.get('proteus')
         if proteus_path:
-            archive = Path(proteus_path) / "archive"
-            archive.mkdir(parents=True, exist_ok=True)
-            return archive
+            # Check if drive exists
+            if len(proteus_path) >= 2 and proteus_path[1] == ':':
+                drive = proteus_path[0:2]
+                try:
+                    os.listdir(drive + '\\')
+                except:
+                    # Drive doesn't exist, fall through to local path
+                    proteus_path = None
+            
+            if proteus_path:
+                archive = Path(proteus_path) / "archive"
+                archive.mkdir(parents=True, exist_ok=True)
+                return archive
     except:
         pass
     
-    # Fallback to project directory
+    # Fallback to project directory (always available)
     project_root = Path(__file__).parent.parent.parent.parent
     archive = project_root / "data" / "proteus" / "archive"
     archive.mkdir(parents=True, exist_ok=True)

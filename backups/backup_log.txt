@@ -1,0 +1,9 @@
+2026-01-05T18:17:17.898319
+  warehouse: warehouse_20260105_181715.sql.gz
+  verceldb: verceldb_20260105_181715.sql.gz
+  source_athletic_screen: source_athletic_screen_20260105_181717.db.gz
+  source_pro_sup: source_pro_sup_20260105_181717.db.gz
+  Errors:
+    app: pg_dump failed: pg_dump: error: connection to server at "localhost" (::1), port 5432 failed: FATAL:  database "local" does not exist
+
+

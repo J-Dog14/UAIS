@@ -62,7 +62,7 @@ try:
             with open(env_path, 'r', encoding='utf-8-sig') as f:
                 all_lines = f.readlines()
                 logger.info(f"Total lines in file: {len(all_lines)}")
-                logger.info(f"⚠️  NOTE: File has BOM (Byte Order Mark) - this can cause parsing issues!")
+                logger.info(f"[WARN] NOTE: File has BOM (Byte Order Mark) - this can cause parsing issues!")
                 logger.info(f"   Consider re-saving the file as UTF-8 without BOM")
                 
                 # Show all non-empty lines
@@ -113,14 +113,14 @@ try:
         all_proteus_vars = {k: v for k, v in os.environ.items() if k.startswith('PROTEUS_')}
         logger.info(f"  PROTEUS_* variables: {len(all_proteus_vars)}")
         if all_proteus_vars:
-            logger.info("  ✓ Variables loaded successfully:")
+            logger.info("  [OK] Variables loaded successfully:")
             for key, value in all_proteus_vars.items():
                 if 'PASSWORD' in key:
                     logger.info(f"    {key}: {'*' * len(value)} (set, {len(value)} chars)")
                 else:
                     logger.info(f"    {key}: {value}")
         else:
-            logger.error("  ❌ No PROTEUS_* variables found in environment!")
+            logger.error("  [ERROR] No PROTEUS_* variables found in environment!")
             
             # Try to manually parse and set them
             logger.info("\n--- Attempting manual parse and set ---")
@@ -144,7 +144,7 @@ try:
                 all_proteus_vars_after_manual = {k: v for k, v in os.environ.items() if k.startswith('PROTEUS_')}
                 logger.info(f"\nAfter manual set: {len(all_proteus_vars_after_manual)} PROTEUS_* variables")
                 if all_proteus_vars_after_manual:
-                    logger.info("  ✓ Manual set successful!")
+                    logger.info("  [OK] Manual set successful!")
                     for key, value in all_proteus_vars_after_manual.items():
                         if 'PASSWORD' in key:
                             logger.info(f"    {key}: {'*' * len(value)}")
@@ -157,7 +157,7 @@ try:
             else:
                 logger.error("  No PROTEUS_ lines found in file to manually set!")
                 logger.error("")
-                logger.error("  ⚠️  IMPORTANT: The PROTEUS_ variables are NOT in your .env file!")
+                logger.error("  [WARN] IMPORTANT: The PROTEUS_ variables are NOT in your .env file!")
                 logger.error(f"     File only has {len(all_lines)} lines, but PROTEUS_ variables should be at lines 26-28")
                 logger.error("")
                 logger.error("  SOLUTION: Add these lines to the END of your .env file:")
