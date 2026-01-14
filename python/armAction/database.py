@@ -103,6 +103,7 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str):
         # Prepare data for bulk insert
         warehouse_rows = []
         temp_rows = []
+        processed_athlete_uuids = set()  # Track unique athlete UUIDs processed
         
         processed_count = 0
         for row in kinematics:
@@ -143,6 +144,7 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str):
                 source_system="arm_action",
                 source_athlete_id=source_athlete_id  # Use extracted initials or cleaned name
             )
+            processed_athlete_uuids.add(athlete_uuid)  # Track this athlete
             
             # Pull the numeric fields from row
             abd_fp = row.get("Arm_Abduction@Footplant") or 0
@@ -240,6 +242,9 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str):
                 print(f"Inserted {len(temp_rows)} record(s) into temp table")
         
         print(f"Processed {processed_count} movement record(s)")
+        
+        # Return list of unique athlete UUIDs that were processed
+        return list(processed_athlete_uuids)
         
     finally:
         conn.close()

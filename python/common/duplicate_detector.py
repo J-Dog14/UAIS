@@ -189,44 +189,69 @@ def merge_similar_athletes(
             'merged': False
         }
     
-    # Step 1: Merge source_athlete_id mappings
-    logger.info("  Step 1: Merging source_athlete_id mappings...")
-    mappings_merged = merge_source_mappings(conn, canonical_uuid, [duplicate_uuid], dry_run=False)
-    logger.info(f"    Merged {mappings_merged} source_athlete_id mapping(s)")
-    
-    # Step 2: Update fact tables to use canonical UUID
-    logger.info("  Step 2: Updating fact tables...")
-    update_fact_tables_only([duplicate_uuid], canonical_uuid, conn)
-    
-    # Step 3: Delete duplicate record FIRST (to avoid unique constraint violation on normalized_name)
-    logger.info("  Step 3: Deleting duplicate record...")
-    with conn.cursor() as cur:
-        cur.execute('''
-            DELETE FROM analytics.d_athletes
-            WHERE athlete_uuid = %s
-        ''', (duplicate_uuid,))
+    # Use a transaction to ensure all steps complete or none do
+    try:
+        # Step 1: Merge source_athlete_id mappings
+        logger.info("  Step 1: Merging source_athlete_id mappings...")
+        mappings_merged = merge_source_mappings(conn, canonical_uuid, [duplicate_uuid], dry_run=False)
+        logger.info(f"    Merged {mappings_merged} source_athlete_id mapping(s)")
+        
+        # Step 2: Update fact tables to use canonical UUID
+        logger.info("  Step 2: Updating fact tables...")
+        update_fact_tables_only([duplicate_uuid], canonical_uuid, conn)
+        
+        # Step 3: Delete duplicate record FIRST (to avoid unique constraint violation on normalized_name)
+        logger.info("  Step 3: Deleting duplicate record...")
+        with conn.cursor() as cur:
+            cur.execute('''
+                DELETE FROM analytics.d_athletes
+                WHERE athlete_uuid = %s
+            ''', (duplicate_uuid,))
+        
+        # Step 4: Update canonical record with correct name (safe now that duplicate is deleted)
+        logger.info("  Step 4: Updating canonical record with correct name...")
+        cleaned_display, cleaned_normalized = clean_athlete_name_for_processing(correct_name)
+        
+        with conn.cursor() as cur:
+            cur.execute('''
+                UPDATE analytics.d_athletes
+                SET name = %s,
+                    normalized_name = %s,
+                    updated_at = NOW()
+                WHERE athlete_uuid = %s
+            ''', (cleaned_display, cleaned_normalized, canonical_uuid))
+        
+        # Commit all changes together
         conn.commit()
-    
-    # Step 4: Update canonical record with correct name (safe now that duplicate is deleted)
-    logger.info("  Step 4: Updating canonical record with correct name...")
-    cleaned_display, cleaned_normalized = clean_athlete_name_for_processing(correct_name)
-    
-    with conn.cursor() as cur:
-        cur.execute('''
-            UPDATE analytics.d_athletes
-            SET name = %s,
-                normalized_name = %s,
-                updated_at = NOW()
-            WHERE athlete_uuid = %s
-        ''', (cleaned_display, cleaned_normalized, canonical_uuid))
-        conn.commit()
-    
-    # Step 5: Update flags
-    logger.info("  Step 5: Updating athlete flags...")
-    from python.common.athlete_manager import update_athlete_flags
-    update_athlete_flags(conn=conn, verbose=False)
-    
-    logger.info("  ✓ Merge complete!")
+        logger.info("  ✓ All merge steps committed to database")
+        
+        # Step 5: Update flags (after commit to ensure data is consistent)
+        logger.info("  Step 5: Updating athlete flags...")
+        from python.common.athlete_manager import update_athlete_flags
+        update_athlete_flags(conn=conn, verbose=False)
+        
+        # Verify merge was successful
+        with conn.cursor() as cur:
+            cur.execute('''
+                SELECT athlete_uuid FROM analytics.d_athletes WHERE athlete_uuid = %s
+            ''', (duplicate_uuid,))
+            if cur.fetchone():
+                raise Exception(f"Merge verification failed: duplicate UUID {duplicate_uuid} still exists!")
+            
+            cur.execute('''
+                SELECT name, normalized_name FROM analytics.d_athletes WHERE athlete_uuid = %s
+            ''', (canonical_uuid,))
+            result = cur.fetchone()
+            if not result:
+                raise Exception(f"Merge verification failed: canonical UUID {canonical_uuid} not found!")
+            if result[1] != cleaned_normalized:
+                logger.warning(f"Merge verification: normalized_name mismatch. Expected {cleaned_normalized}, got {result[1]}")
+        
+        logger.info("  ✓ Merge complete and verified!")
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"  ✗ Merge failed, rolled back: {e}")
+        raise
     
     return {
         'canonical_uuid': canonical_uuid,
@@ -329,8 +354,8 @@ def find_similar_athletes_for_uuids(
     """
     Find pairs of athletes with similar names, focusing on the provided UUIDs.
     
-    This checks the provided athletes against all athletes in the database
-    to find potential duplicates.
+    This checks ONLY the provided athletes against all athletes in the database
+    to find potential duplicates. It does NOT scan all athletes.
     
     Args:
         conn: Database connection
@@ -338,12 +363,13 @@ def find_similar_athletes_for_uuids(
         min_similarity: Minimum similarity score (0.0 to 1.0) to consider a match
         
     Returns:
-        List of tuples: (athlete1, athlete2, similarity_score)
+        List of tuples: (target_athlete, other_athlete, similarity_score)
+        where target_athlete is one of the provided UUIDs
     """
     if not athlete_uuids:
         return []
     
-    # Get the specific athletes we're checking
+    # Get the specific athletes we're checking (the current ones being processed)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         placeholders = ','.join(['%s'] * len(athlete_uuids))
         cur.execute(f'''
@@ -383,7 +409,8 @@ def find_similar_athletes_for_uuids(
     if not target_athletes:
         return []
     
-    # Get all athletes for comparison
+    # Get all OTHER athletes for comparison (exclude the ones we're checking)
+    target_uuids_set = {a['athlete_uuid'] for a in target_athletes}
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute('''
             SELECT 
@@ -419,9 +446,9 @@ def find_similar_athletes_for_uuids(
         all_athletes = cur.fetchall()
     
     similar_pairs = []
-    target_uuids = {a['athlete_uuid'] for a in target_athletes}
+    seen_pairs = set()  # Track pairs we've already added to avoid duplicates
     
-    # Compare target athletes with all athletes
+    # Compare ONLY target athletes (current ones) with all other athletes
     for target_athlete in target_athletes:
         for other_athlete in all_athletes:
             # Skip if same athlete
@@ -436,10 +463,11 @@ def find_similar_athletes_for_uuids(
             score = similarity_score(target_athlete['name'], other_athlete['name'])
             
             if score >= min_similarity:
-                # Avoid duplicates (A-B and B-A)
+                # Create a unique pair key (sorted UUIDs) to avoid duplicates
                 pair_key = tuple(sorted([target_athlete['athlete_uuid'], other_athlete['athlete_uuid']]))
-                if pair_key not in {tuple(sorted([a1['athlete_uuid'], a2['athlete_uuid']])) 
-                                   for a1, a2, _ in similar_pairs}:
+                if pair_key not in seen_pairs:
+                    seen_pairs.add(pair_key)
+                    # Always put target_athlete first (the one we're currently processing)
                     similar_pairs.append((dict(target_athlete), dict(other_athlete), score))
     
     # Sort by similarity score (highest first)
@@ -478,15 +506,18 @@ def check_and_merge_duplicates(
         logger.info("CHECKING FOR SIMILAR ATHLETE NAMES")
         logger.info("=" * 80)
         
-        # Find similar athletes
-        if athlete_uuids:
-            logger.info(f"Checking {len(athlete_uuids)} newly processed athlete(s) for similar names...")
-            similar_pairs = find_similar_athletes_for_uuids(conn, athlete_uuids, min_similarity)
-        else:
-            # Check all athletes (fallback to original behavior)
-            logger.info("Checking all athletes for similar names...")
-            from python.scripts.find_and_merge_similar_athletes import find_similar_athletes
-            similar_pairs = find_similar_athletes(conn, min_similarity)
+        # Find similar athletes - REQUIRE athlete_uuids (no full DB audit)
+        if not athlete_uuids:
+            logger.warning("No athlete UUIDs provided. Skipping duplicate check.")
+            logger.info("To check for duplicates, provide the UUIDs of athletes that were just processed.")
+            return {
+                'matches_found': 0,
+                'merged': 0,
+                'skipped': 0
+            }
+        
+        logger.info(f"Checking {len(athlete_uuids)} newly processed athlete(s) for similar names...")
+        similar_pairs = find_similar_athletes_for_uuids(conn, athlete_uuids, min_similarity)
         
         logger.info(f"Found {len(similar_pairs)} potential matches")
         

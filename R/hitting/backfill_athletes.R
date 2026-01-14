@@ -168,7 +168,7 @@ extract_athlete_info <- function(path) {
 }
 
 # ---------- Configuration ----------
-DATA_ROOT <- "D:/Hitting/Data"  # Set to your hitting data directory path
+DATA_ROOT <- Sys.getenv("HITTING_DATA_DIR", unset = "D:/Hitting/Data")  # Set to your hitting data directory path
 
 # ---------- Main processing ----------
 cat("\n")

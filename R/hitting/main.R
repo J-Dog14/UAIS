@@ -38,8 +38,8 @@ source(processing_script)
 default_data_root <- if (exists("DATA_ROOT") && !is.null(DATA_ROOT)) {
   DATA_ROOT
 } else {
-  # Fallback to common default
-  "D:/Hitting/Data"
+  # Fallback to common default from environment variable
+  Sys.getenv("HITTING_DATA_DIR", unset = "D:/Hitting/Data")
 }
 
 # Check if default directory exists, if not use parent or current directory

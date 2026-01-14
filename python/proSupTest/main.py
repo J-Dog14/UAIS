@@ -338,8 +338,8 @@ def find_ascii_file_for_folder(folder_path: str) -> Optional[str]:
     if os.path.exists(folder_ascii):
         return folder_ascii
     
-    # Check for shared ASCII file in D:/Pro-Sup Test/
-    shared_ascii = "D:/Pro-Sup Test/pro-sup_data.txt"
+    # Check for shared ASCII file
+    shared_ascii = os.getenv('PRO_SUP_SHARED_ASCII', "D:/Pro-Sup Test/pro-sup_data.txt")
     if os.path.exists(shared_ascii):
         return shared_ascii
     
@@ -655,7 +655,7 @@ def process_single_folder(folder_path: str):
                 athlete_uuid=athlete_uuid,
                 athlete_name=athlete_name,
                 test_date=test_date,
-                output_dir="D:/Pro-Sup Test/Reports",
+                output_dir=os.getenv('PRO_SUP_REPORTS_DIR', "D:/Pro-Sup Test/Reports"),
                 conn=pg_conn
             )
             print("✓ Report generated successfully")
@@ -680,13 +680,13 @@ def main():
     # Get default directory from config
     try:
         raw_paths = get_raw_paths()
-        default_dir = raw_paths.get('pro_sup', 'D:/Pro-Sup Test/Data/')
+        default_dir = raw_paths.get('pro_sup', os.getenv('PRO_SUP_DATA_DIR', 'D:/Pro-Sup Test/Data/'))
     except:
-        default_dir = 'D:/Pro-Sup Test/Data/'
+        default_dir = os.getenv('PRO_SUP_DATA_DIR', 'D:/Pro-Sup Test/Data/')
     
     # Ensure folder path exists
     if 'path/to' in default_dir or not os.path.exists(default_dir):
-        default_dir = 'D:/Pro-Sup Test/Data/'
+        default_dir = os.getenv('PRO_SUP_DATA_DIR', 'D:/Pro-Sup Test/Data/')
     
     # Prompt user to select folder
     print("Please select a folder containing Session.xml...")

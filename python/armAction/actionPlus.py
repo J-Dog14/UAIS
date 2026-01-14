@@ -333,9 +333,8 @@ def ingest_data(aPlusDataPath, aPlusEventsPath, db_path="actionPlus.sqlite"):
 # 6) Example main – adjust file paths as needed
 ###############################################################################
 if __name__ == "__main__":
+    from config import APLUS_EVENTS_PATH, APLUS_DATA_PATH
     DB_PATH = "actionPlus.sqlite"
-    APLUS_EVENTS_PATH = r"D:\Youth Pitch Design\Exports\aPlus_events.txt"
-    APLUS_DATA_PATH = r"D:\Youth Pitch Design\Exports\APlusData.txt"
     init_db(DB_PATH)
     ingest_data(APLUS_DATA_PATH, APLUS_EVENTS_PATH, DB_PATH)
     print("✅ Done. Check movement_data in actionPlus.sqlite.")
@@ -357,14 +356,11 @@ from reportlab.platypus import Table, TableStyle
 ####################################################
 # CONFIG
 ####################################################
+from config import (
+    OUTPUT_DIR, OUTPUT_DIR_TWO, LOGO_PATH,
+    AP_TORSO_V_FILE, AP_ARM_V_FILE
+)
 DB_PATH = "actionPlus.sqlite"
-OUTPUT_DIR = r"D:\Youth Pitch Design\Reports\Action+"
-OUTPUT_DIR_TWO = r"G:\My Drive\Youth Pitch Reports\Reports\Action+"
-LOGO_PATH = r"C:\Users\q\PycharmProjects\Youth Pitch Design\8ctane - Faded 8 to Blue.png"
-
-# Text files for velocities:
-AP_TORSO_V_FILE = r"D:\Youth Pitch Design\Exports\aPlus_torsoVelo.txt"
-AP_ARM_V_FILE   = r"D:\Youth Pitch Design\Exports\aPlus_armVelo.txt"
 
 # Image paths
 ASSETS_DIR = r"C:\Users\q\PycharmProjects\Youth Pitch Design\assets"

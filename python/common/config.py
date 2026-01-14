@@ -1,12 +1,23 @@
 """
 Configuration management for UAIS.
 Loads YAML config and provides database engines and raw data paths.
+Also loads environment variables from .env file.
 """
 import yaml
 import os
 from pathlib import Path
 from sqlalchemy import create_engine, text
 from typing import Dict, Any, Optional
+
+# Load environment variables from .env file if it exists
+try:
+    from dotenv import load_dotenv
+    env_path = Path(__file__).parent.parent.parent / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+except ImportError:
+    # python-dotenv not installed, skip loading .env
+    pass
 
 
 def _load_config() -> Dict[str, Any]:

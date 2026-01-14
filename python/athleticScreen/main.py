@@ -568,8 +568,8 @@ def process_txt_files(folder_path: str):
             from athleticScreen.pdf_report import generate_pdf_report
             
             # Set output directories for reports (save to both locations)
-            reports_dir_1 = r'G:\My Drive\Athletic Screen 2.0 Reports\Reports 2.0'
-            reports_dir_2 = r'D:\Athletic Screen 2.0\Reports'
+            reports_dir_1 = os.getenv('ATHLETIC_SCREEN_REPORTS_GOOGLE_DRIVE', r'G:\My Drive\Athletic Screen 2.0 Reports\Reports 2.0')
+            reports_dir_2 = os.getenv('ATHLETIC_SCREEN_REPORTS_DIR', r'D:\Athletic Screen 2.0\Reports')
             
             os.makedirs(reports_dir_1, exist_ok=True)
             os.makedirs(reports_dir_2, exist_ok=True)
@@ -649,13 +649,13 @@ def main():
     # Get paths from config (or use defaults)
     try:
         raw_paths = get_raw_paths()
-        folder_path = raw_paths.get('athletic_screen', r'D:/Athletic Screen 2.0/Output Files/')
+        folder_path = raw_paths.get('athletic_screen', os.getenv('ATHLETIC_SCREEN_DATA_DIR', r'D:/Athletic Screen 2.0/Output Files/'))
     except:
-        folder_path = r'D:/Athletic Screen 2.0/Output Files/'
+        folder_path = os.getenv('ATHLETIC_SCREEN_DATA_DIR', r'D:/Athletic Screen 2.0/Output Files/')
     
     # Ensure folder path exists
     if 'path/to' in folder_path or not os.path.exists(folder_path):
-        folder_path = r'D:/Athletic Screen 2.0/Output Files/'
+        folder_path = os.getenv('ATHLETIC_SCREEN_DATA_DIR', r'D:/Athletic Screen 2.0/Output Files/')
     
     folder_path = os.path.abspath(folder_path)
     

@@ -70,22 +70,25 @@ if __name__ == "__main__":
         sys.exit(1)
     
     print("Ingesting movement data into warehouse...")
-    ingest_data(APLUS_DATA_PATH, APLUS_EVENTS_PATH)
+    processed_athlete_uuids = ingest_data(APLUS_DATA_PATH, APLUS_EVENTS_PATH)
     
     # Update athletes summary table with aggregated statistics
     print("\nUpdating athlete flags in warehouse...")
     update_athletes_summary()
     
-    # Check for duplicate athletes and prompt to merge
-    print("\nChecking for similar athlete names...")
-    try:
-        conn = get_warehouse_connection()
-        check_and_merge_duplicates(conn=conn, athlete_uuids=None, min_similarity=0.80)
-        conn.close()
-    except Exception as e:
-        print(f"Warning: Could not check for duplicates: {str(e)}")
-        import traceback
-        traceback.print_exc()
+    # Check for duplicate athletes and prompt to merge (only check current athletes)
+    if processed_athlete_uuids:
+        print(f"\nChecking {len(processed_athlete_uuids)} newly processed athlete(s) for similar names...")
+        try:
+            conn = get_warehouse_connection()
+            check_and_merge_duplicates(conn=conn, athlete_uuids=processed_athlete_uuids, min_similarity=0.80)
+            conn.close()
+        except Exception as e:
+            print(f"Warning: Could not check for duplicates: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print("\nNo athletes processed, skipping duplicate check.")
     
     # Generate report
     print("\nGenerating PDF report...")

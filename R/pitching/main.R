@@ -38,8 +38,8 @@ source(processing_script)
 default_data_root <- if (exists("DATA_ROOT") && !is.null(DATA_ROOT)) {
   DATA_ROOT
 } else {
-  # Fallback to common default
-  "H:/Pitching/Data"
+  # Fallback to common default from environment variable
+  Sys.getenv("PITCHING_DATA_DIR", unset = "H:/Pitching/Data")
 }
 
 # Check if default directory exists, if not use parent or current directory

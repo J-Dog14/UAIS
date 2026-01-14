@@ -10,3 +10,6 @@ pyyaml
 dash
 plotly
 reportlab
+boto3  # For AWS S3 uploads
+openpyxl  # For reading Excel files
+requests  # For HTTP requests (if needed)

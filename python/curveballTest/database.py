@@ -142,6 +142,7 @@ def ingest_pitches_with_events(events_dict):
             temp_col_names.extend([f"x_{lbl}", f"y_{lbl}", f"z_{lbl}", f"ax_{lbl}", f"ay_{lbl}", f"az_{lbl}"])
         
         temp_rows = []
+        processed_athlete_uuids = set()  # Track unique athlete UUIDs processed
         
         print(f"Processing {len(events_dict)} regular pitches")
         
@@ -193,6 +194,7 @@ def ingest_pitches_with_events(events_dict):
                 source_system="curveball_test",
                 source_athlete_id=source_athlete_id
             )
+            processed_athlete_uuids.add(athlete_uuid)  # Track this athlete
             
             # Build row_dict with all angle/accel data
             row_dict = {
@@ -320,6 +322,9 @@ def ingest_pitches_with_events(events_dict):
                 print(f"Inserted {len(temp_rows)} record(s) into temp table")
         
         print(f"Processed {len(warehouse_rows)} pitch record(s)")
+        
+        # Return list of unique athlete UUIDs that were processed
+        return list(processed_athlete_uuids)
         
     finally:
         conn.close()

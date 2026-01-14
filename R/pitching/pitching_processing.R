@@ -103,7 +103,8 @@ if (!athlete_manager_loaded) {
 
 # ---------- Configuration ----------
 # Set to NULL to use current directory, or specify path
-DATA_ROOT <- "H:/Pitching/Data"  # Set to your pitching data directory path, NULL for testing with local files
+# Load from environment variable, with fallback
+DATA_ROOT <- Sys.getenv("PITCHING_DATA_DIR", unset = "H:/Pitching/Data")  # Set to your pitching data directory path, NULL for testing with local files
 USE_WAREHOUSE <- TRUE  # Set to TRUE to write to PostgreSQL warehouse, FALSE for local SQLite
 DB_FILE <- "pitching_data.db"  # Only used if USE_WAREHOUSE = FALSE
 TRUNCATE_BEFORE_INSERT <- FALSE  # Set to TRUE to clear table before inserting (prevents duplicates on re-run)

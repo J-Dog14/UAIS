@@ -973,14 +973,14 @@ def main():
             
             if not gsheet_directory:
                 # Fall back to mapped drive (may not work in Task Scheduler)
-                gsheet_directory = r"G:\My Drive\Data\Mobility Assessments"
+                gsheet_directory = os.getenv('MOBILITY_GOOGLE_DRIVE_DIR', r"G:\My Drive\Data\Mobility Assessments")
                 logger.warning(f"Using mapped drive path (may not work in Task Scheduler): {gsheet_directory}")
     except Exception as e:
         logger.warning(f"Could not load paths from config: {e}")
         # Use local cache directory instead of D:\ (which may be remote/unavailable)
         local_cache = project_root / "data" / "mobility_cache"
         excel_directory = str(local_cache)
-        gsheet_directory = r"G:\My Drive\Data\Mobility Assessments"
+        gsheet_directory = os.getenv('MOBILITY_GOOGLE_DRIVE_DIR', r"G:\My Drive\Data\Mobility Assessments")
     
     credentials_path = project_root / "config" / "client_secret_414564039392-jrmaopurbrsv91gjffc59v8cndv3e58q.apps.googleusercontent.com.json"
     

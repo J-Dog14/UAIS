@@ -316,16 +316,18 @@ def parse_txt_file(file_path: str, movement_type: str) -> Optional[Dict]:
         return None
 
 
-def select_folder_dialog(initial_dir: str = 'D:/Readiness Screen 3/Data/') -> Optional[str]:
+def select_folder_dialog(initial_dir: Optional[str] = None) -> Optional[str]:
     """
     Open a folder selection dialog.
     
     Args:
-        initial_dir: Initial directory for the dialog.
+        initial_dir: Initial directory for the dialog. If None, uses READINESS_SCREEN_DATA_DIR env var.
     
     Returns:
         Selected folder path or None if cancelled.
     """
+    if initial_dir is None:
+        initial_dir = os.getenv('READINESS_SCREEN_DATA_DIR', 'D:/Readiness Screen 3/Data/')
     try:
         import tkinter as tk
         from tkinter import filedialog

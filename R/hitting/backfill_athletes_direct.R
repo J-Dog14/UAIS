@@ -205,7 +205,7 @@ extract_athlete_info <- function(path) {
 }
 
 # ---------- Configuration ----------
-DATA_ROOT <- "D:/Hitting/Data"
+DATA_ROOT <- Sys.getenv("HITTING_DATA_DIR", unset = "D:/Hitting/Data")
 
 # ---------- Main processing ----------
 cat("\n")

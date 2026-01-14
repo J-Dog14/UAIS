@@ -420,18 +420,18 @@ def main():
     # Following notebook logic: base_dir is where Data folders are, output_path is shared Output Files
     try:
         raw_paths = get_raw_paths()
-        base_dir = raw_paths.get('readiness_screen', 'D:/Readiness Screen 3/Data/')
-        output_path = raw_paths.get('readiness_screen_output', 'D:/Readiness Screen 3/Output Files/')
+        base_dir = raw_paths.get('readiness_screen', os.getenv('READINESS_SCREEN_DATA_DIR', 'D:/Readiness Screen 3/Data/'))
+        output_path = raw_paths.get('readiness_screen_output', os.getenv('READINESS_SCREEN_OUTPUT_DIR', 'D:/Readiness Screen 3/Output Files/'))
     except:
-        base_dir = 'D:/Readiness Screen 3/Data/'
-        output_path = 'D:/Readiness Screen 3/Output Files/'
+        base_dir = os.getenv('READINESS_SCREEN_DATA_DIR', 'D:/Readiness Screen 3/Data/')
+        output_path = os.getenv('READINESS_SCREEN_OUTPUT_DIR', 'D:/Readiness Screen 3/Output Files/')
     
     # Database is in the parent directory (following notebook)
     # Use the standard path from the notebook: D:/Readiness Screen 3/Readiness_Screen_Data_v2.db
     # If base_dir is a placeholder path, use the default location
     if 'path/to' in base_dir or not os.path.exists(base_dir):
-        # Use default location
-        db_path = 'D:/Readiness Screen 3/Readiness_Screen_Data_v2.db'
+        # Use default location from environment variable
+        db_path = os.getenv('READINESS_SCREEN_DB', 'D:/Readiness Screen 3/Readiness_Screen_Data_v2.db')
     else:
         # Normalize the path to handle trailing slashes
         base_dir_normalized = base_dir.rstrip('/\\')

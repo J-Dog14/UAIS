@@ -175,16 +175,18 @@ def parse_ascii_file(ascii_file_path: str) -> Dict:
     return values
 
 
-def select_folder_dialog(initial_dir: str = 'D:/Pro-Sup Test/Data/') -> Optional[str]:
+def select_folder_dialog(initial_dir: Optional[str] = None) -> Optional[str]:
     """
     Open a folder selection dialog.
     
     Args:
-        initial_dir: Initial directory for the dialog.
+        initial_dir: Initial directory for the dialog. If None, uses PRO_SUP_DATA_DIR env var.
     
     Returns:
         Selected folder path or None if cancelled.
     """
+    if initial_dir is None:
+        initial_dir = os.getenv('PRO_SUP_DATA_DIR', 'D:/Pro-Sup Test/Data/')
     try:
         import tkinter as tk
         from tkinter import filedialog
