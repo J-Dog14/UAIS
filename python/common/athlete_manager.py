@@ -39,6 +39,18 @@ import yaml
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(levelname)s:%(name)s:%(message)s')
 logger = logging.getLogger(__name__)
 
+# Import age utilities for automatic age/age_group calculation
+try:
+    from python.common.age_utils import (
+        calculate_age,
+        calculate_age_group,
+        parse_date
+    )
+    AGE_UTILS_AVAILABLE = True
+except ImportError:
+    AGE_UTILS_AVAILABLE = False
+    logger.warning("age_utils module not available - age/age_group will not be auto-calculated")
+
 
 def normalize_name_for_display(name: str) -> str:
     """
@@ -139,19 +151,60 @@ def get_warehouse_connection():
     """
     Get connection to warehouse database.
     
+    Supports:
+    1. Connection string in config (for Neon/cloud databases)
+    2. Individual fields in config (for local databases)
+    3. WAREHOUSE_DATABASE_URL environment variable (fallback)
+    
     Returns:
         psycopg2 connection object
     """
-    config = load_db_config()
-    wh_config = config['databases']['warehouse']['postgres']
+    import os
     
+    config = load_db_config()
+    wh_config = config['databases']['warehouse']
+    
+    # Check for connection_string in config first (for Neon/cloud)
+    if 'postgres' in wh_config and 'connection_string' in wh_config['postgres']:
+        conn_str = wh_config['postgres']['connection_string']
+        conn = psycopg2.connect(
+            conn_str,
+            connect_timeout=10,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5
+        )
+        conn.set_client_encoding('UTF8')
+        return conn
+    
+    # Check environment variable (fallback for cloud databases)
+    env_conn_str = os.environ.get('WAREHOUSE_DATABASE_URL')
+    if env_conn_str:
+        conn = psycopg2.connect(
+            env_conn_str,
+            connect_timeout=10,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5
+        )
+        conn.set_client_encoding('UTF8')
+        return conn
+    
+    # Use individual fields (local database)
+    pg_config = wh_config['postgres']
     conn = psycopg2.connect(
-        host=wh_config['host'],
-        port=wh_config['port'],
-        database=wh_config['database'],
-        user=wh_config['user'],
-        password=wh_config['password'],
-        connect_timeout=10
+        host=pg_config['host'],
+        port=pg_config['port'],
+        database=pg_config['database'],
+        user=pg_config['user'],
+        password=pg_config['password'],
+        connect_timeout=10,
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=5
     )
     conn.set_client_encoding('UTF8')
     
@@ -426,17 +479,29 @@ def create_athlete_in_warehouse(
                 athlete_uuid = str(uuid.uuid4())
                 logger.info(f"Generated new UUID for {name}: {athlete_uuid}")
         
+        # Auto-calculate age and age_group from DOB if available
+        calculated_age = age
+        calculated_age_group = None
+        if AGE_UTILS_AVAILABLE and date_of_birth:
+            dob_date = parse_date(date_of_birth)
+            if dob_date:
+                calculated_age = calculate_age(dob_date)
+                if calculated_age is not None:
+                    calculated_age_group = calculate_age_group(calculated_age)
+                    logger.debug(f"Auto-calculated age={calculated_age:.2f}, age_group={calculated_age_group} from DOB")
+        
         with conn.cursor() as cur:
             # Use UPSERT to handle duplicate UUIDs gracefully
             # This prevents "duplicate key value violates unique constraint" errors
+            # Note: age_group is updated when DOB changes (recalculate from current age)
             cur.execute('''
                 INSERT INTO analytics.d_athletes (
                     athlete_uuid, name, normalized_name,
-                    date_of_birth, age, age_at_collection,
+                    date_of_birth, age, age_at_collection, age_group,
                     gender, height, weight, notes,
                     source_system, source_athlete_id, app_db_uuid, app_db_synced_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
                 )
                 ON CONFLICT (athlete_uuid) 
                 DO UPDATE SET
@@ -445,6 +510,11 @@ def create_athlete_in_warehouse(
                     date_of_birth = COALESCE(EXCLUDED.date_of_birth, analytics.d_athletes.date_of_birth),
                     age = COALESCE(EXCLUDED.age, analytics.d_athletes.age),
                     age_at_collection = COALESCE(EXCLUDED.age_at_collection, analytics.d_athletes.age_at_collection),
+                    age_group = CASE 
+                        WHEN EXCLUDED.date_of_birth IS NOT NULL AND EXCLUDED.date_of_birth != analytics.d_athletes.date_of_birth THEN EXCLUDED.age_group
+                        WHEN EXCLUDED.age IS NOT NULL AND EXCLUDED.age != analytics.d_athletes.age THEN EXCLUDED.age_group
+                        ELSE COALESCE(EXCLUDED.age_group, analytics.d_athletes.age_group)
+                    END,
                     gender = COALESCE(EXCLUDED.gender, analytics.d_athletes.gender),
                     height = COALESCE(EXCLUDED.height, analytics.d_athletes.height),
                     weight = COALESCE(EXCLUDED.weight, analytics.d_athletes.weight),
@@ -458,7 +528,7 @@ def create_athlete_in_warehouse(
                     END
             ''', (
                 athlete_uuid, name, normalized_name,
-                date_of_birth, age, age_at_collection,
+                date_of_birth, calculated_age, age_at_collection, calculated_age_group,
                 gender, height, weight, notes,
                 source_system, source_athlete_id, app_db_uuid
             ))
@@ -540,6 +610,25 @@ def update_athlete_in_warehouse(
         close_conn = True
     
     try:
+        # Auto-calculate age and age_group if DOB is being updated
+        calculated_age = age
+        calculated_age_group = None
+        dob_being_updated = date_of_birth is not None
+        
+        if AGE_UTILS_AVAILABLE:
+            # If DOB is being updated, recalculate age and age_group
+            if dob_being_updated:
+                dob_date = parse_date(date_of_birth)
+                if dob_date:
+                    calculated_age = calculate_age(dob_date)
+                    if calculated_age is not None:
+                        calculated_age_group = calculate_age_group(calculated_age)
+                        logger.debug(f"Recalculated age={calculated_age:.2f}, age_group={calculated_age_group} from DOB")
+            # If age is being updated (but not DOB), recalculate age_group
+            elif age is not None:
+                calculated_age_group = calculate_age_group(age)
+                logger.debug(f"Recalculated age_group={calculated_age_group} from age")
+        
         updates = []
         params = []
         
@@ -551,13 +640,21 @@ def update_athlete_in_warehouse(
             updates.append("date_of_birth = COALESCE(date_of_birth, %s)")
             params.append(date_of_birth)
         
-        if age is not None:
+        if calculated_age is not None:
+            updates.append("age = COALESCE(age, %s)")
+            params.append(calculated_age)
+        elif age is not None:
             updates.append("age = COALESCE(age, %s)")
             params.append(age)
         
         if age_at_collection is not None:
             updates.append("age_at_collection = COALESCE(age_at_collection, %s)")
             params.append(age_at_collection)
+        
+        # Update age_group if we calculated it (only when DOB or age changes)
+        if calculated_age_group is not None:
+            updates.append("age_group = %s")
+            params.append(calculated_age_group)
         
         if gender is not None:
             updates.append("gender = COALESCE(gender, %s)")

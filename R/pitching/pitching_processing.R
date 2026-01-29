@@ -25,6 +25,11 @@ if (!requireNamespace("RPostgres", quietly = TRUE)) {
 }
 library(uuid)
 library(tools)
+if (!requireNamespace("jsonlite", quietly = TRUE)) {
+  warning("jsonlite not installed - f_pitching_trials will not be written. Install with: install.packages('jsonlite')")
+} else {
+  library(jsonlite)
+}
 
 # Load common utilities
 # Try multiple paths to find the common utilities
@@ -108,6 +113,27 @@ DATA_ROOT <- Sys.getenv("PITCHING_DATA_DIR", unset = "H:/Pitching/Data")  # Set 
 USE_WAREHOUSE <- TRUE  # Set to TRUE to write to PostgreSQL warehouse, FALSE for local SQLite
 DB_FILE <- "pitching_data.db"  # Only used if USE_WAREHOUSE = FALSE
 TRUNCATE_BEFORE_INSERT <- FALSE  # Set to TRUE to clear table before inserting (prevents duplicates on re-run)
+
+# ---------- Age group calculation ----------
+#' Calculate age group from age_at_collection
+#' Matches Python age_utils.calculate_age_group() logic
+#' @param age_at_collection Age at time of data collection (numeric)
+#' @return Age group string: "YOUTH", "HIGH SCHOOL", "COLLEGE", "PRO", or NA
+calculate_age_group_from_age <- function(age_at_collection) {
+  if (is.na(age_at_collection)) {
+    return(NA_character_)
+  }
+  
+  if (age_at_collection < 13) {
+    return("YOUTH")
+  } else if (age_at_collection >= 14 && age_at_collection <= 18) {
+    return("HIGH SCHOOL")
+  } else if (age_at_collection > 18 && age_at_collection <= 22) {
+    return("COLLEGE")
+  } else {  # age_at_collection > 22
+    return("PRO")
+  }
+}
 
 # ---------- Name normalization and UUID matching ----------
 #' Normalize name for matching: convert LAST, FIRST to FIRST LAST and remove dates
@@ -421,6 +447,198 @@ extract_athlete_info <- function(path) {
   )
 }
 
+# ---------- Extract velocity mappings from session.xml ----------
+#' Extract velocity (MPH) from Comments field in Measurement elements
+#' @param path Path to session.xml file
+#' @return Named list mapping measurement filenames to velocity values (MPH)
+extract_velocity_mappings <- function(path) {
+  doc <- tryCatch(read_xml_robust(path), error = function(e) NULL)
+  if (is.null(doc)) return(list())
+  
+  root <- xml_root(doc)
+  if (!identical(xml_name(root), "Subject")) return(list())
+  
+  velocity_map <- list()
+  
+  # Find all Measurement elements
+  measurements <- xml_find_all(root, ".//Measurement")
+  
+  for (meas in measurements) {
+    # Get Filename attribute
+    meas_filename <- xml_attr(meas, "Filename")
+    if (is.na(meas_filename) || meas_filename == "") next
+    
+    # Get Comments field value (velocity in MPH)
+    fields <- xml_find_first(meas, "./Fields")
+    if (!inherits(fields, "xml_missing")) {
+      comments_elem <- xml_find_first(fields, "./Comments")
+      if (!inherits(comments_elem, "xml_missing")) {
+        comments_text <- trimws(xml_text(comments_elem))
+        if (!is.na(comments_text) && comments_text != "") {
+          # Try to parse as numeric (MPH)
+          velocity <- suppressWarnings(as.numeric(comments_text))
+          if (!is.na(velocity) && velocity > 0) {
+            # Map both with and without extension
+            velocity_map[[meas_filename]] <- velocity
+            meas_no_ext <- tools::file_path_sans_ext(meas_filename)
+            velocity_map[[meas_no_ext]] <- velocity
+            # Also map with .c3d extension (in case owner names use .c3d)
+            meas_c3d <- sub("\\.qtm$", ".c3d", meas_filename, ignore.case = TRUE)
+            if (meas_c3d != meas_filename) {
+              velocity_map[[meas_c3d]] <- velocity
+              meas_c3d_no_ext <- tools::file_path_sans_ext(meas_c3d)
+              velocity_map[[meas_c3d_no_ext]] <- velocity
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  return(velocity_map)
+}
+
+# ---------- Calculate score from metric data ----------
+#' Calculate pitching score from XML document by extracting required metrics
+#' @param doc XML document (session_data.xml)
+#' @param owner_name Owner name to extract metrics for
+#' @param velocity_mph Velocity in MPH (already extracted)
+#' @param weight_kg Body weight in kg (from session.xml); if lead_leg_midpoint > 10, divide by (weight_kg*9.81) to normalize from raw N
+#' @return Numeric score value or NA if insufficient data
+calculate_pitching_score <- function(doc, owner_name, velocity_mph = NA_real_, weight_kg = NA_real_) {
+  if (is.null(doc)) return(NA_real_)
+  
+  root <- xml_root(doc)
+  if (!identical(xml_name(root), "v3d")) return(NA_real_)
+  
+  # Helper function to extract metric value from XML by variable name and component
+  extract_metric_from_xml <- function(var_name, component = NULL) {
+    # Find the owner
+    owners <- xml_find_all(root, paste0("./owner[@value='", owner_name, "']"))
+    if (length(owners) == 0) return(NA_real_)
+    
+    # Try original name first, then try with @Foot_Contact as alias for @Footstrike
+    var_names_to_try <- c(var_name)
+    if (grepl("@Footstrike", var_name)) {
+      var_names_to_try <- c(var_name, sub("@Footstrike", "@Foot_Contact", var_name))
+    }
+    
+    # Find metric types
+    for (own in owners) {
+      metric_types <- xml_find_all(own, "./type[@value='METRIC']")
+      for (mt in metric_types) {
+        folders <- xml_find_all(mt, "./folder")
+        for (fol in folders) {
+          names <- xml_find_all(fol, "./name[@value]")
+          for (nm in names) {
+            metric_name <- xml_attr(nm, "value")
+            if (is.na(metric_name) || !metric_name %in% var_names_to_try) next
+            
+            # Find component
+            comps <- xml_find_all(nm, "./component")
+            for (comp in comps) {
+              comp_val <- xml_attr(comp, "value")
+              if (!is.null(component) && comp_val != component) next
+              
+              # Get data (first value for event-based metrics)
+              data_attr <- xml_attr(comp, "data") %||% xml_text(comp)
+              if (is.na(data_attr) || data_attr == "") next
+              
+              # Parse first value
+              vals <- parse_comma_data(data_attr)
+              if (length(vals) > 0 && !is.na(vals[1])) {
+                return(as.numeric(vals[1]))
+              }
+            }
+          }
+        }
+      }
+    }
+    return(NA_real_)
+  }
+  
+  # Extract direct variables with component specifications
+  linear_pelvis_speed <- extract_metric_from_xml("MaxPelvisLinearVel_MPH", "Y")
+  lead_leg_midpoint <- extract_metric_from_xml("Lead_Leg_GRF_mag_Midpoint_FS_Release", "X")
+  horizontal_abduction <- extract_metric_from_xml("Pitching_Shoulder_Angle@Footstrike", "X")
+  torso_ang_velo <- extract_metric_from_xml("Thorax_Ang_Vel_max", "X")
+  trunk_ang_fp <- extract_metric_from_xml("Trunk_Angle@Footstrike", "Z")
+  pelvis_ang_fp <- extract_metric_from_xml("Pelvis_Angle@Footstrike", "Z")
+  shld_er_max <- extract_metric_from_xml("Pitching_Shoulder_Angle_Max", "Z")
+  pelvis_ang_velo <- extract_metric_from_xml("Pelvis_Ang_Vel_max", "X")
+  
+  # Extract variables for calculated metrics
+  lead_knee_ang_fp_x <- extract_metric_from_xml("Lead_Knee_Angle@Footstrike", "X")
+  lead_knee_ang_rel_x <- extract_metric_from_xml("Lead_Knee_Angle@Release", "X")
+  pelvis_ang_fp_y <- extract_metric_from_xml("Pelvis_Angle@Footstrike", "Y")
+  pelvis_ang_rel_y <- extract_metric_from_xml("Pelvis_Angle@Release", "Y")
+  lead_knee_ang_fp_y <- extract_metric_from_xml("Lead_Knee_Angle@Footstrike", "Y")
+  lead_knee_ang_rel_y <- extract_metric_from_xml("Lead_Knee_Angle@Release", "Y")
+  
+  # Calculate derived variables
+  front_leg_brace <- NA_real_
+  if (!is.na(lead_knee_ang_fp_x) && !is.na(lead_knee_ang_rel_x)) {
+    front_leg_brace <- lead_knee_ang_fp_x - lead_knee_ang_rel_x
+  }
+  
+  pelvis_obl <- NA_real_
+  if (!is.na(pelvis_ang_rel_y) && !is.na(pelvis_ang_fp_y)) {
+    pelvis_obl <- pelvis_ang_rel_y - pelvis_ang_fp_y
+  }
+  
+  front_leg_var_val <- NA_real_
+  if (!is.na(lead_knee_ang_fp_y) && !is.na(lead_knee_ang_rel_y)) {
+    front_leg_var_val <- lead_knee_ang_fp_y - lead_knee_ang_rel_y
+  }
+  
+  # Default weight when NULL so score scaling isn't thrown off (e.g. missing athlete demographics)
+  weight_kg_use <- if (!is.na(weight_kg) && weight_kg > 0) weight_kg else (180 / 2.2046226)  # 180 lbs -> kg
+  
+  # Apply absolute values where needed
+  if (!is.na(lead_leg_midpoint)) {
+    lead_leg_midpoint <- abs(lead_leg_midpoint)
+    # If > 10, value is raw Newtons (not BW-normalized); convert to BW multiples
+    if (lead_leg_midpoint > 10) {
+      lead_leg_midpoint <- lead_leg_midpoint / (weight_kg_use * 9.81)
+    }
+  }
+  if (!is.na(horizontal_abduction)) {
+    horizontal_abduction <- abs(horizontal_abduction)
+  }
+  if (!is.na(shld_er_max)) {
+    shld_er_max <- abs(shld_er_max)
+  }
+  
+  # score = velo_part + metric_sum (no offset, no cap). Velo = 2.78 * MPH. Metric part = raw sum; elite mechanics can exceed 250 (e.g. 264). ~500 = top 1%, scores can go slightly above (e.g. 512).
+  VELO_MULT <- 2.78
+  velo_part <- ifelse(!is.na(velocity_mph), VELO_MULT * velocity_mph, 0)
+  # Per-variable coefficients: lead_leg_midpoint=18 base, then +15% on all metrics
+  metric_sum_raw <-
+    ifelse(!is.na(shld_er_max), 0.2415 * shld_er_max, 0) +
+    ifelse(!is.na(lead_leg_midpoint), 20.7 * lead_leg_midpoint, 0) +
+    ifelse(!is.na(horizontal_abduction), 0.7245 * horizontal_abduction, 0) +
+    ifelse(!is.na(torso_ang_velo), 0.0181125 * torso_ang_velo, 0) -
+    ifelse(!is.na(pelvis_ang_fp), 0.2415 * pelvis_ang_fp, 0) +
+    ifelse(!is.na(front_leg_brace), 0.422625 * front_leg_brace, 0) +
+    ifelse(!is.na(trunk_ang_fp), 0.301875 * trunk_ang_fp, 0) -
+    ifelse(!is.na(front_leg_var_val), 0.2415 * abs(front_leg_var_val), 0) +
+    ifelse(!is.na(linear_pelvis_speed), 1.2075 * linear_pelvis_speed, 0) -
+    ifelse(!is.na(pelvis_obl), 0.181125 * abs(pelvis_obl), 0) +
+    ifelse(!is.na(pelvis_ang_velo), 0.0483 * pelvis_ang_velo, 0)
+  metric_sum <- metric_sum_raw  # no scaling; sliding scale so elite performers aren't capped
+  score <- velo_part + metric_sum
+  
+  # Return NA if we couldn't calculate a meaningful score (all inputs were NA)
+  if (is.na(linear_pelvis_speed) && is.na(front_leg_brace) && is.na(lead_leg_midpoint) &&
+      is.na(horizontal_abduction) && is.na(torso_ang_velo) && is.na(pelvis_obl) &&
+      is.na(trunk_ang_fp) && is.na(pelvis_ang_fp) && is.na(shld_er_max) &&
+      is.na(front_leg_var_val) && is.na(pelvis_ang_velo) && is.na(velocity_mph)) {
+    return(NA_real_)
+  }
+  
+  return(score)
+}
+
 # ---------- Extract time series data from session_data.xml ----------
 parse_comma_data <- function(data_str) {
   if (is.na(data_str) || data_str == "") return(numeric(0))
@@ -700,21 +918,61 @@ process_all_files <- function(data_root = NULL) {
   if (use_warehouse) {
     # Connect to PostgreSQL warehouse
     log_progress("Connecting to PostgreSQL warehouse database...")
+    cat("\n*** ATTEMPTING WAREHOUSE CONNECTION ***\n")
+    cat("USE_WAREHOUSE is set to: TRUE\n")
+    flush.console()
+    
     con <- tryCatch({
-      get_warehouse_connection()
+      warehouse_conn <- get_warehouse_connection()
+      # Verify connection works by testing a simple query
+      test_query <- tryCatch({
+        DBI::dbGetQuery(warehouse_conn, "SELECT 1 as test")
+        TRUE
+      }, error = function(e) {
+        log_progress("  [WARNING] Connection test failed:", conditionMessage(e))
+        FALSE
+      })
+      
+      if (!test_query) {
+        log_progress("  [ERROR] Warehouse connection test failed")
+        DBI::dbDisconnect(warehouse_conn)
+        NULL
+      } else {
+        warehouse_conn
+      }
     }, error = function(e) {
+      cat("\n*** WAREHOUSE CONNECTION FAILED ***\n")
+      cat("ERROR:", conditionMessage(e), "\n")
+      cat("This means data will be written to LOCAL SQLite database instead of Neon!\n")
+      cat("File:", DB_FILE, "\n")
+      cat("\nTo fix this, check:\n")
+      cat("  1. Database connection settings in R/common/config.R\n")
+      cat("  2. Environment variables for database credentials\n")
+      cat("  3. Network connectivity to Neon database\n")
+      cat("\n")
+      flush.console()
       log_progress("ERROR: Could not connect to warehouse database:", conditionMessage(e))
       log_progress("Falling back to local SQLite database")
       use_warehouse <<- FALSE
       # Fall through to SQLite connection
       NULL
     })
+    
     if (is.null(con)) {
       # Fallback to SQLite
+      cat("\n*** USING LOCAL SQLITE DATABASE (FALLBACK) ***\n")
+      cat("WARNING: Data will NOT be written to Neon warehouse!\n")
+      cat("Local database file:", DB_FILE, "\n")
+      cat("\n")
+      flush.console()
       use_warehouse <<- FALSE
       con <- DBI::dbConnect(RSQLite::SQLite(), DB_FILE)
       log_progress("Using local SQLite database as fallback")
     } else {
+      cat("\n*** SUCCESSFULLY CONNECTED TO WAREHOUSE DATABASE ***\n")
+      cat("Data will be written to Neon PostgreSQL warehouse\n")
+      cat("\n")
+      flush.console()
       log_progress("Connected to warehouse database")
     }
   } else {
@@ -743,33 +1001,56 @@ process_all_files <- function(data_root = NULL) {
   con <- DBI::dbConnect(RSQLite::SQLite(), DB_FILE)
   }
   
-  # Fetch athlete UUID mapping from app database
-  cat("\n*** STEP 1: FETCHING UUIDs FROM APP DATABASE ***\n")
-  log_progress("Fetching athlete UUIDs from app database...")
-  uuid_map <- fetch_athlete_uuid_map()
-  cat("*** UUID MAP RESULT: Contains", length(uuid_map), "entries ***\n")
+  # Fetch athlete UUID mapping from warehouse database (not app database)
+  # This is just for pre-populating the cache - athlete_manager will handle actual matching
+  cat("\n*** STEP 1: FETCHING UUIDs FROM WAREHOUSE DATABASE (optional pre-cache) ***\n")
+  log_progress("Fetching athlete UUIDs from warehouse database for pre-caching...")
+  
+  uuid_map <- list()  # Start empty - athlete_manager will handle matching
+  if (use_warehouse && !is.null(con)) {
+    tryCatch({
+      # Try to get UUIDs from warehouse d_athletes table for pre-caching
+      warehouse_uuids <- DBI::dbGetQuery(con, "
+        SELECT athlete_uuid, normalized_name, name
+        FROM analytics.d_athletes
+        LIMIT 10000
+      ")
+      if (nrow(warehouse_uuids) > 0) {
+        # Build a simple map from normalized_name to UUID for pre-caching
+        for (i in seq_len(nrow(warehouse_uuids))) {
+          uuid_map[[warehouse_uuids$normalized_name[i]]] <- warehouse_uuids$athlete_uuid[i]
+        }
+        log_progress("Pre-cached", length(uuid_map), "UUIDs from warehouse")
+      }
+    }, error = function(e) {
+      log_progress("Could not pre-cache UUIDs from warehouse (non-critical):", conditionMessage(e))
+    })
+  }
+  
+  cat("*** UUID MAP RESULT: Contains", length(uuid_map), "entries (pre-cache) ***\n")
   log_progress("UUID map contains", length(uuid_map), "entries")
   if (length(uuid_map) > 0) {
-    cat("*** FIRST 5 UUID MAPPINGS ***\n")
+    cat("*** FIRST 5 UUID MAPPINGS (pre-cache) ***\n")
     log_progress("First few UUID mappings:")
     for (i in seq_len(min(5, length(uuid_map)))) {
       cat("  '", names(uuid_map)[i], "' -> '", uuid_map[[i]], "'\n", sep = "")
       log_progress("  ", names(uuid_map)[i], " -> ", uuid_map[[i]])
     }
   } else {
-    cat("*** CRITICAL WARNING: UUID MAP IS EMPTY! ***\n")
-    cat("*** All athletes will get NEW UUIDs instead of matching existing ones ***\n")
-    log_progress("WARNING: UUID map is empty! Will generate new UUIDs for all athletes.")
+    cat("*** NOTE: UUID MAP IS EMPTY (pre-cache) - this is OK! ***\n")
+    cat("*** athlete_manager will handle UUID matching when creating athletes ***\n")
+    log_progress("NOTE: UUID pre-cache is empty - athlete_manager will handle matching")
   }
   cat("\n")
   
   # Process session.xml files to get athlete info
   athlete_list <- list()
   owner_mapping <- list()  # Map owner names to athlete IDs
+  velocity_mapping <- list()  # Map measurement filenames to velocity (MPH) from Comments field
   
   total_session_files <- length(session_files)
   log_progress("=", rep("=", 60), sep = "")
-  log_progress("PHASE 1: Processing", total_session_files, "session.xml files for athlete info")
+  log_progress("PHASE 1: Processing", total_session_files, "session.xml files for athlete info and velocity")
   log_progress("=", rep("=", 60), sep = "")
   
   for (i in seq_along(session_files)) {
@@ -863,6 +1144,23 @@ process_all_files <- function(data_root = NULL) {
             meas_no_ext <- tools::file_path_sans_ext(meas_filename)
             owner_mapping[[meas_no_ext]] <- athlete_info$uid[1]
             log_progress("    Mapped measurement:", meas_filename)
+          }
+        }
+      }
+      
+      # Extract velocity mappings from session.xml (Comments field -> velocity in MPH)
+      velocity_map_from_file <- extract_velocity_mappings(sf)
+      if (length(velocity_map_from_file) > 0) {
+        # Merge into global velocity_mapping
+        for (key in names(velocity_map_from_file)) {
+          velocity_mapping[[key]] <- velocity_map_from_file[[key]]
+        }
+        log_progress("  [VELOCITY] Extracted", length(velocity_map_from_file), "velocity mappings from", basename(sf))
+        if (i <= 3) {
+          # Show first few mappings for debugging
+          example_keys <- head(names(velocity_map_from_file), min(3, length(velocity_map_from_file)))
+          for (key in example_keys) {
+            log_progress("    ", key, "->", velocity_map_from_file[[key]], "MPH")
           }
         }
       }
@@ -1207,6 +1505,62 @@ process_all_files <- function(data_root = NULL) {
           } else {
             metric_data$athlete_id <- NA_character_
           }
+          
+          # Match velocity from session.xml Comments field
+          # Try to match owner_name to velocity_mapping (with and without extension, with .c3d)
+          velocity_mph <- NA_real_
+          owner_base <- basename(owner_name)
+          owner_no_ext <- tools::file_path_sans_ext(owner_base)
+          
+          # Try multiple matching strategies
+          if (owner_name %in% names(velocity_mapping)) {
+            velocity_mph <- velocity_mapping[[owner_name]]
+          } else if (owner_base %in% names(velocity_mapping)) {
+            velocity_mph <- velocity_mapping[[owner_base]]
+          } else if (owner_no_ext %in% names(velocity_mapping)) {
+            velocity_mph <- velocity_mapping[[owner_no_ext]]
+          } else {
+            # Try with .qtm extension
+            owner_qtm <- paste0(owner_no_ext, ".qtm")
+            if (owner_qtm %in% names(velocity_mapping)) {
+              velocity_mph <- velocity_mapping[[owner_qtm]]
+            } else {
+              # Try with .c3d extension
+              owner_c3d <- paste0(owner_no_ext, ".c3d")
+              if (owner_c3d %in% names(velocity_mapping)) {
+                velocity_mph <- velocity_mapping[[owner_c3d]]
+              }
+            }
+          }
+          
+          # Add velocity_mph column to all rows (same value for all rows of this pitch)
+          metric_data$velocity_mph <- velocity_mph
+          
+          if (i <= 3 && !is.na(velocity_mph)) {
+            log_progress("      [VELOCITY] Matched velocity for", owner_name, ":", velocity_mph, "MPH")
+            cat("    [VELOCITY] Matched:", velocity_mph, "MPH for owner", owner_name, "\n")
+            flush.console()
+          } else if (i <= 3 && is.na(velocity_mph)) {
+            log_progress("      [WARNING] No velocity found for", owner_name)
+            cat("    [WARNING] No velocity mapping found for owner:", owner_name, "\n")
+            flush.console()
+          }
+          
+          # Calculate score for this pitch (extract directly from XML)
+          weight_kg <- if ("weight" %in% names(best_match) && !is.na(best_match$weight[1])) as.numeric(best_match$weight[1]) else NA_real_
+          pitch_score <- calculate_pitching_score(doc, owner_name, velocity_mph, weight_kg)
+          metric_data$score <- pitch_score
+          
+          if (i <= 3 && !is.na(pitch_score)) {
+            log_progress("      [SCORE] Calculated score for", owner_name, ":", round(pitch_score, 2))
+            cat("    [SCORE] Calculated:", round(pitch_score, 2), "for owner", owner_name, "\n")
+            flush.console()
+          } else if (i <= 3 && is.na(pitch_score)) {
+            log_progress("      [WARNING] Could not calculate score for", owner_name, "- missing required variables")
+            cat("    [WARNING] Could not calculate score for owner:", owner_name, "\n")
+            flush.console()
+          }
+          
           metric_data$source_file <- basename(sdf)
           metric_data$source_path <- sdf
           metric_data_list[[length(metric_data_list) + 1]] <- metric_data
@@ -1273,7 +1627,7 @@ process_all_files <- function(data_root = NULL) {
     
     # Pad each dataframe to max_frames before binding
     log_progress("  Padding dataframes to", max_frames, "frames...")
-    meta_cols <- c("uid", "athlete_id", "owner", "folder", "variable", "source_file", "source_path")
+    meta_cols <- c("uid", "athlete_id", "owner", "folder", "variable", "source_file", "source_path", "velocity_mph", "score")
     value_cols <- paste0("value_", 1:max_frames)
     
     padded_list <- list()
@@ -1363,6 +1717,180 @@ process_all_files <- function(data_root = NULL) {
       cat("  [SUCCESS] Session dates assigned!\n")
       flush.console()
       
+      # Create mapping from athlete_uuid to age_at_collection, height, weight
+      log_progress("  Creating age/height/weight mapping from athlete_list...")
+      uuid_to_age_df <- tibble(
+        uid = character(),
+        age_at_collection = numeric(),
+        height = numeric(),
+        weight = numeric()
+      )
+      for (athlete_info in athlete_list) {
+        if (nrow(athlete_info) > 0 && "uid" %in% names(athlete_info) && !is.na(athlete_info$uid[1])) {
+          athlete_uuid <- athlete_info$uid[1]
+          age_at_collection <- athlete_info$age_at_collection[1]
+          height <- if ("height" %in% names(athlete_info)) athlete_info$height[1] else NA_real_
+          weight <- if ("weight" %in% names(athlete_info)) athlete_info$weight[1] else NA_real_
+          uuid_to_age_df <- bind_rows(
+            uuid_to_age_df,
+            tibble(
+              uid = athlete_uuid,
+              age_at_collection = if (!is.na(age_at_collection)) as.numeric(age_at_collection) else NA_real_,
+              height = as.numeric(height),
+              weight = as.numeric(weight)
+            )
+          )
+        }
+      }
+      log_progress("  Mapped", nrow(uuid_to_age_df), "athletes with age/height/weight")
+      
+      # ---------- Build trial-level rows for f_pitching_trials ----------
+      if (requireNamespace("jsonlite", quietly = TRUE) && length(metric_data_list) > 0) {
+        log_progress("  Building trial-level rows for f_pitching_trials...")
+        default_date <- Sys.Date()
+        trial_rows <- list()
+        for (idx in seq_along(metric_data_list)) {
+          df <- metric_data_list[[idx]]
+          if (nrow(df) == 0) next
+          path_dir <- normalizePath(dirname(df$source_path[1]), winslash = "/", mustWork = FALSE)
+          session_date <- path_to_date_map[[path_dir]]
+          if (is.null(session_date)) session_date <- default_date
+          uid <- df$uid[1]
+          age_row <- uuid_to_age_df %>% filter(.data$uid == !!uid)
+          age_at_collection <- if (nrow(age_row) > 0) age_row$age_at_collection[1] else NA_real_
+          age_group <- if (!is.na(age_at_collection)) calculate_age_group_from_age(age_at_collection) else NA_character_
+          height <- if (nrow(age_row) > 0) age_row$height[1] else NA_real_
+          weight <- if (nrow(age_row) > 0) age_row$weight[1] else NA_real_
+          # Build metrics as named list: "folder.variable" -> numeric vector of values
+          value_cols <- grep("^value_\\d+$", names(df), value = TRUE)
+          metrics_list <- list()
+          for (r in seq_len(nrow(df))) {
+            key <- paste(df$folder[r], df$variable[r], sep = ".")
+            metrics_list[[key]] <- as.numeric(df[r, value_cols])
+          }
+          metrics_json <- jsonlite::toJSON(metrics_list, auto_unbox = TRUE, digits = 8)
+          session_xml_path <- file.path(dirname(df$source_path[1]), "session.xml")
+          trial_rows[[length(trial_rows) + 1]] <- tibble(
+            idx = idx,
+            athlete_uuid = uid,
+            session_date = session_date,
+            source_athlete_id = df$athlete_id[1],
+            owner_filename = df$owner[1],
+            velocity_mph = df$velocity_mph[1],
+            score = df$score[1],
+            age_at_collection = age_at_collection,
+            age_group = age_group,
+            height = height,
+            weight = weight,
+            metrics_json = metrics_json,
+            session_xml_path = session_xml_path,
+            session_data_xml_path = df$source_path[1]
+          )
+        }
+        if (length(trial_rows) > 0) {
+          trials_df <- bind_rows(trial_rows) %>%
+            group_by(.data$athlete_uuid, .data$session_date) %>%
+            arrange(.data$idx) %>%
+            mutate(trial_index = row_number() - 1L) %>%
+            ungroup() %>%
+            select(athlete_uuid, session_date, source_athlete_id, owner_filename, trial_index,
+                   velocity_mph, score, age_at_collection, age_group, height, weight, metrics_json,
+                   session_xml_path, session_data_xml_path)
+          log_progress("  Built", nrow(trials_df), "trial rows for f_pitching_trials")
+          # Ensure f_pitching_trials table exists
+          trials_table_exists <- DBI::dbExistsTable(con, DBI::Id(schema = "public", table = "f_pitching_trials"))
+          if (!trials_table_exists) {
+            log_progress("  Creating f_pitching_trials table...")
+            DBI::dbExecute(con, "
+              CREATE TABLE IF NOT EXISTS public.f_pitching_trials (
+                id SERIAL PRIMARY KEY,
+                athlete_uuid VARCHAR(36) NOT NULL,
+                session_date DATE NOT NULL,
+                source_system VARCHAR(50) NOT NULL DEFAULT 'pitching',
+                source_athlete_id VARCHAR(100),
+                owner_filename TEXT,
+                trial_index INTEGER NOT NULL,
+                velocity_mph NUMERIC,
+                score NUMERIC,
+                age_at_collection NUMERIC,
+                age_group TEXT,
+                height NUMERIC,
+                weight NUMERIC,
+                metrics JSONB NOT NULL,
+                session_xml_path TEXT,
+                session_data_xml_path TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT f_pitching_trials_athlete_uuid_fkey
+                  FOREIGN KEY (athlete_uuid) REFERENCES analytics.d_athletes(athlete_uuid) ON DELETE CASCADE
+              )
+            ")
+            DBI::dbExecute(con, "
+              CREATE UNIQUE INDEX IF NOT EXISTS idx_f_pitching_trials_unique
+                ON public.f_pitching_trials(athlete_uuid, session_date, trial_index)
+            ")
+            DBI::dbExecute(con, "
+              CREATE INDEX IF NOT EXISTS idx_f_pitching_trials_owner ON public.f_pitching_trials(owner_filename)
+            ")
+            DBI::dbExecute(con, "
+              CREATE INDEX IF NOT EXISTS idx_f_pitching_trials_date ON public.f_pitching_trials(session_date)
+            ")
+            log_progress("  [SUCCESS] Created f_pitching_trials table")
+          } else {
+            # Add age columns if missing
+            trials_cols <- DBI::dbGetQuery(con, "
+              SELECT column_name FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'f_pitching_trials'
+            ")$column_name
+            if (!"age_at_collection" %in% trials_cols) {
+              DBI::dbExecute(con, "ALTER TABLE public.f_pitching_trials ADD COLUMN age_at_collection NUMERIC")
+              log_progress("  Added age_at_collection to f_pitching_trials")
+            }
+            if (!"age_group" %in% trials_cols) {
+              DBI::dbExecute(con, "ALTER TABLE public.f_pitching_trials ADD COLUMN age_group TEXT")
+              log_progress("  Added age_group to f_pitching_trials")
+            }
+            if (!"height" %in% trials_cols) {
+              DBI::dbExecute(con, "ALTER TABLE public.f_pitching_trials ADD COLUMN height NUMERIC")
+              log_progress("  Added height to f_pitching_trials")
+            }
+            if (!"weight" %in% trials_cols) {
+              DBI::dbExecute(con, "ALTER TABLE public.f_pitching_trials ADD COLUMN weight NUMERIC")
+              log_progress("  Added weight to f_pitching_trials")
+            }
+          }
+          # Insert/upsert trials
+          trials_df$source_system <- "pitching"
+          for (r in seq_len(nrow(trials_df))) {
+            row <- trials_df[r, ]
+            DBI::dbExecute(con, "
+              INSERT INTO public.f_pitching_trials
+                (athlete_uuid, session_date, source_system, source_athlete_id, owner_filename, trial_index,
+                 velocity_mph, score, age_at_collection, age_group, height, weight, metrics, session_xml_path, session_data_xml_path)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15)
+              ON CONFLICT (athlete_uuid, session_date, trial_index) DO UPDATE SET
+                owner_filename = EXCLUDED.owner_filename,
+                source_athlete_id = COALESCE(EXCLUDED.source_athlete_id, f_pitching_trials.source_athlete_id),
+                velocity_mph = EXCLUDED.velocity_mph,
+                score = EXCLUDED.score,
+                age_at_collection = EXCLUDED.age_at_collection,
+                age_group = EXCLUDED.age_group,
+                height = COALESCE(EXCLUDED.height, f_pitching_trials.height),
+                weight = COALESCE(EXCLUDED.weight, f_pitching_trials.weight),
+                metrics = EXCLUDED.metrics,
+                session_xml_path = EXCLUDED.session_xml_path,
+                session_data_xml_path = EXCLUDED.session_data_xml_path,
+                created_at = NOW()
+            ", params = list(
+              row$athlete_uuid, row$session_date, row$source_system, row$source_athlete_id,
+              row$owner_filename, row$trial_index, row$velocity_mph, row$score,
+              row$age_at_collection, row$age_group, row$height, row$weight, row$metrics_json,
+              row$session_xml_path, row$session_data_xml_path
+            ))
+          }
+          log_progress("  [SUCCESS] Wrote", nrow(trials_df), "rows to f_pitching_trials")
+        }
+      }
+      
       # Prepare data for warehouse - pivot to long format
       log_progress("  Transforming data for warehouse format...")
       cat("  [PROGRESS] Pivoting to long format (this may take a while with", nrow(metric_df), "rows)...\n")
@@ -1372,9 +1900,9 @@ process_all_files <- function(data_root = NULL) {
       value_cols <- grep("^value_\\d+$", names(metric_df), value = TRUE)
       log_progress("  Found", length(value_cols), "value columns to pivot")
       
-      # Pivot to long format
+      # Pivot to long format and join age_at_collection, then calculate age_group
       warehouse_df <- metric_df %>%
-        select(uid, athlete_id, owner, folder, variable, source_file, source_path, session_date, all_of(value_cols)) %>%
+        select(uid, athlete_id, owner, folder, variable, source_file, source_path, session_date, velocity_mph, score, all_of(value_cols)) %>%
         pivot_longer(
           cols = all_of(value_cols),
           names_to = "frame",
@@ -1382,11 +1910,17 @@ process_all_files <- function(data_root = NULL) {
           names_prefix = "value_"
         ) %>%
         filter(!is.na(value)) %>%  # Remove NA values
+        # Join age_at_collection from mapping
+        left_join(uuid_to_age_df, by = "uid") %>%
         mutate(
           frame = as.integer(frame),
           metric_name = paste(folder, variable, sep = "."),
           source_system = "pitching",
-          created_at = Sys.time()
+          created_at = Sys.time(),
+          # Calculate age_group from age_at_collection
+          age_group = ifelse(!is.na(age_at_collection),
+                             calculate_age_group_from_age(age_at_collection),
+                             NA_character_)
         ) %>%
         select(
           athlete_uuid = uid,
@@ -1396,6 +1930,10 @@ process_all_files <- function(data_root = NULL) {
           metric_name,
           frame,
           value,
+          velocity_mph,
+          score,
+          age_at_collection,
+          age_group,
           created_at
         )
       
@@ -1432,6 +1970,8 @@ process_all_files <- function(data_root = NULL) {
             metric_name TEXT NOT NULL,
             frame INTEGER NOT NULL,
             value NUMERIC,
+            velocity_mph NUMERIC,
+            score NUMERIC,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             CONSTRAINT idx_f_pitching_unique UNIQUE (athlete_uuid, session_date, metric_name, frame)
           )
@@ -1460,6 +2000,40 @@ process_all_files <- function(data_root = NULL) {
           log_progress("  Table needs metric_name, frame, and value columns")
           log_progress("  You may need to drop and recreate the table, or use a different table name")
           stop("f_kinematics_pitching table exists but has incompatible structure. Please drop and recreate it.")
+        }
+        
+        # Check if velocity_mph column exists, add if missing
+        if (!"velocity_mph" %in% table_info$column_name) {
+          log_progress("  velocity_mph column missing, adding it...")
+          tryCatch({
+            DBI::dbExecute(con, "
+              ALTER TABLE public.f_kinematics_pitching
+              ADD COLUMN velocity_mph NUMERIC
+            ")
+            log_progress("  [SUCCESS] Added velocity_mph column")
+          }, error = function(e) {
+            log_progress("  [WARNING] Could not add velocity_mph column:", conditionMessage(e))
+            log_progress("  Velocity data will not be stored. You may need to manually add the column.")
+          })
+        } else {
+          log_progress("  velocity_mph column exists")
+        }
+        
+        # Check if score column exists, add if missing
+        if (!"score" %in% table_info$column_name) {
+          log_progress("  score column missing, adding it...")
+          tryCatch({
+            DBI::dbExecute(con, "
+              ALTER TABLE public.f_kinematics_pitching
+              ADD COLUMN score NUMERIC
+            ")
+            log_progress("  [SUCCESS] Added score column")
+          }, error = function(e) {
+            log_progress("  [WARNING] Could not add score column:", conditionMessage(e))
+            log_progress("  Score data will not be stored. You may need to manually add the column.")
+          })
+        } else {
+          log_progress("  score column exists")
         }
         
         # Check if unique constraint exists
@@ -1504,140 +2078,92 @@ process_all_files <- function(data_root = NULL) {
       
       if (nrow(warehouse_df) > 0) {
         tryCatch({
-          # Check if we should clear existing data first
-          # Option: Add a flag to control this behavior, or check for duplicates
-          existing_count <- DBI::dbGetQuery(con, "SELECT COUNT(*) as count FROM f_kinematics_pitching")$count
-          log_progress("  Existing rows in table:", existing_count)
+          # OPTIMIZED: Skip all pre-checks - ON CONFLICT handles duplicates efficiently
+          # This removes expensive SELECT DISTINCT queries on large tables
+          log_progress("  Inserting", nrow(warehouse_df), "rows to f_kinematics_pitching...")
           
-          if (existing_count > 0) {
-            if (TRUNCATE_BEFORE_INSERT) {
-              log_progress("  Truncating existing data before inserting new data...")
-              DBI::dbExecute(con, "TRUNCATE TABLE f_kinematics_pitching")
-              log_progress("  [SUCCESS] Table truncated")
-            } else {
-              log_progress("  [WARNING] Table already contains", existing_count, "rows!")
-              log_progress("  This will APPEND new data, potentially creating duplicates")
-              log_progress("  To avoid duplicates, set TRUNCATE_BEFORE_INSERT <- TRUE")
-              
-              # Check for potential duplicates based on unique combination
-              # We'll use a simple check: if the new data size matches existing, warn
-              if (nrow(warehouse_df) == existing_count) {
-                log_progress("  [WARNING] New data count matches existing count - possible duplicate run!")
-              }
-            }
+          # Handle TRUNCATE if requested (rarely needed)
+          if (TRUNCATE_BEFORE_INSERT) {
+            log_progress("  Truncating existing data before inserting new data...")
+            DBI::dbExecute(con, "TRUNCATE TABLE f_kinematics_pitching")
+            log_progress("  [SUCCESS] Table truncated")
           }
           
-          log_progress("  Writing", nrow(warehouse_df), "rows to database...")
-          
-          # Use INSERT with ON CONFLICT to prevent duplicates
-          # First, let's try to identify potential duplicates before inserting
-          # Check for existing data with same athlete_uuid, session_date, metric_name, and frame
-          log_progress("  Checking for potential duplicates...")
-          
-          # Get unique combinations from new data
-          new_combos <- warehouse_df %>%
-            distinct(athlete_uuid, session_date, metric_name, frame) %>%
-            mutate(check_key = paste(athlete_uuid, session_date, metric_name, frame, sep = "|"))
-          
-          # Check existing data
-          existing_combos <- DBI::dbGetQuery(con, "
-            SELECT DISTINCT athlete_uuid, session_date, metric_name, frame
-            FROM f_kinematics_pitching
-          ")
-          
-          if (nrow(existing_combos) > 0) {
-            existing_combos$check_key <- paste(existing_combos$athlete_uuid, 
-                                               existing_combos$session_date, 
-                                               existing_combos$metric_name, 
-                                               existing_combos$frame, sep = "|")
-            
-            # Find duplicates
-            duplicates <- new_combos$check_key %in% existing_combos$check_key
-            n_duplicates <- sum(duplicates)
-            
-            if (n_duplicates > 0) {
-              log_progress("  [WARNING] Found", n_duplicates, "potential duplicate rows!")
-              log_progress("  Filtering out duplicates before insert...")
-              
-              # Filter out duplicates from warehouse_df
-              warehouse_df$check_key <- paste(warehouse_df$athlete_uuid, 
-                                               warehouse_df$session_date, 
-                                               warehouse_df$metric_name, 
-                                               warehouse_df$frame, sep = "|")
-              warehouse_df <- warehouse_df[!warehouse_df$check_key %in% existing_combos$check_key, ]
-              warehouse_df$check_key <- NULL  # Remove temporary column
-              
-              log_progress("  After filtering:", nrow(warehouse_df), "unique rows to insert")
-            } else {
-              log_progress("  No duplicates found - all rows are new")
-            }
-          } else {
-            log_progress("  No existing data - all rows are new")
+          # Ensure data types match Prisma schema
+          warehouse_df$athlete_uuid <- as.character(warehouse_df$athlete_uuid)
+          warehouse_df$session_date <- as.Date(warehouse_df$session_date)
+          warehouse_df$source_system <- as.character(warehouse_df$source_system)
+          if (!is.null(warehouse_df$source_athlete_id)) {
+            warehouse_df$source_athlete_id <- as.character(warehouse_df$source_athlete_id)
           }
+          warehouse_df$metric_name <- as.character(warehouse_df$metric_name)
+          warehouse_df$frame <- as.integer(warehouse_df$frame)
+          warehouse_df$value <- as.numeric(warehouse_df$value)
+          if (!is.null(warehouse_df$velocity_mph)) {
+            warehouse_df$velocity_mph <- as.numeric(warehouse_df$velocity_mph)
+          }
+          if (!is.null(warehouse_df$score)) {
+            warehouse_df$score <- as.numeric(warehouse_df$score)
+          }
+          # Age columns
+          if (!is.null(warehouse_df$age_at_collection)) {
+            warehouse_df$age_at_collection <- as.numeric(warehouse_df$age_at_collection)
+          }
+          if (!is.null(warehouse_df$age_group)) {
+            warehouse_df$age_group <- as.character(warehouse_df$age_group)
+          }
+          warehouse_df$created_at <- as.POSIXct(warehouse_df$created_at)
           
-          if (nrow(warehouse_df) > 0) {
-            # Prisma creates a unique constraint on (athlete_uuid, session_date, metric_name, frame)
-            # Use dbWriteTable but wrap in tryCatch to catch constraint violations
-            # If it fails, we'll use a workaround
-            log_progress("  Inserting", nrow(warehouse_df), "rows to f_kinematics_pitching...")
+          # OPTIMIZED: Use temp table + single COPY + INSERT for maximum speed
+          log_progress("  Using optimized bulk insert (temp table + COPY + ON CONFLICT)...")
+          cat("  [INFO] Writing data to database (this may take a moment)...\n")
+          flush.console()
+          
+          rows_inserted <- tryCatch({
+            # Create a temporary table with the same structure
+            temp_table_name <- "temp_pitching_insert"
             
-            # Ensure data types match Prisma schema
-            warehouse_df$athlete_uuid <- as.character(warehouse_df$athlete_uuid)
-            warehouse_df$session_date <- as.Date(warehouse_df$session_date)
-            warehouse_df$source_system <- as.character(warehouse_df$source_system)
-            if (!is.null(warehouse_df$source_athlete_id)) {
-              warehouse_df$source_athlete_id <- as.character(warehouse_df$source_athlete_id)
-            }
-            warehouse_df$metric_name <- as.character(warehouse_df$metric_name)
-            warehouse_df$frame <- as.integer(warehouse_df$frame)
-            warehouse_df$value <- as.numeric(warehouse_df$value)
-            warehouse_df$created_at <- as.POSIXct(warehouse_df$created_at)
+            log_progress("  Creating temporary table...")
+            DBI::dbExecute(con, paste0("
+              CREATE TEMP TABLE ", temp_table_name, " (
+                athlete_uuid VARCHAR(36) NOT NULL,
+                session_date DATE NOT NULL,
+                source_system VARCHAR(50) NOT NULL,
+                source_athlete_id VARCHAR(100),
+                metric_name TEXT NOT NULL,
+                frame INTEGER NOT NULL,
+                value NUMERIC,
+                velocity_mph NUMERIC,
+                score NUMERIC,
+                age_at_collection NUMERIC,
+                age_group TEXT,
+                created_at TIMESTAMP
+              )
+            "))
             
-            # Use temp table + INSERT ... ON CONFLICT DO NOTHING to handle duplicates gracefully
-            log_progress("  Inserting data with ON CONFLICT DO NOTHING (skips duplicates)...")
-            cat("  [INFO] Writing data to database (this may take a moment)...\n")
+            # OPTIMIZED: Write ALL data to temp table in ONE operation (uses COPY internally)
+            # This is much faster than batching - dbWriteTable uses COPY protocol
+            log_progress("  Writing", nrow(warehouse_df), "rows to temp table (single COPY operation)...")
+            DBI::dbWriteTable(con, temp_table_name, warehouse_df, append = TRUE, row.names = FALSE)
+            
+            # OPTIMIZED: Single INSERT with ON CONFLICT - PostgreSQL handles duplicates efficiently
+            log_progress("  Inserting from temp table to f_kinematics_pitching (ON CONFLICT handles duplicates)...")
+            result <- DBI::dbExecute(con, paste0("
+              INSERT INTO public.f_kinematics_pitching 
+              (athlete_uuid, session_date, source_system, source_athlete_id, metric_name, frame, value, velocity_mph, score, age_at_collection, age_group, created_at)
+              SELECT athlete_uuid, session_date, source_system, source_athlete_id, metric_name, frame, value, velocity_mph, score, age_at_collection, age_group, created_at
+              FROM ", temp_table_name, "
+              ON CONFLICT (athlete_uuid, session_date, metric_name, frame) DO NOTHING
+            "))
+            
+            # Drop temp table
+            DBI::dbExecute(con, paste0("DROP TABLE IF EXISTS ", temp_table_name))
+            
+            log_progress("  [SUCCESS] Inserted", result, "new rows (skipped", nrow(warehouse_df) - result, "duplicates)")
+            cat("  [SUCCESS] Insert complete!\n")
             flush.console()
             
-            rows_inserted <- tryCatch({
-              # Create a temporary table with the same structure
-              temp_table_name <- "temp_pitching_insert"
-              
-              log_progress("  Creating temporary table for batch insert...")
-              DBI::dbExecute(con, paste0("
-                CREATE TEMP TABLE ", temp_table_name, " (
-                  athlete_uuid VARCHAR(36) NOT NULL,
-                  session_date DATE NOT NULL,
-                  source_system VARCHAR(50) NOT NULL,
-                  source_athlete_id VARCHAR(100),
-                  metric_name TEXT NOT NULL,
-                  frame INTEGER NOT NULL,
-                  value NUMERIC,
-                  created_at TIMESTAMP
-                )
-              "))
-              
-              # Write data to temp table (fast)
-              log_progress("  Writing", nrow(warehouse_df), "rows to temp table...")
-              DBI::dbWriteTable(con, temp_table_name, warehouse_df, append = TRUE, row.names = FALSE)
-              
-              # Insert from temp table to actual table with ON CONFLICT DO NOTHING
-              log_progress("  Inserting from temp table to f_kinematics_pitching (skipping duplicates)...")
-              result <- DBI::dbExecute(con, paste0("
-                INSERT INTO public.f_kinematics_pitching 
-                (athlete_uuid, session_date, source_system, source_athlete_id, metric_name, frame, value, created_at)
-                SELECT athlete_uuid, session_date, source_system, source_athlete_id, metric_name, frame, value, created_at
-                FROM ", temp_table_name, "
-                ON CONFLICT (athlete_uuid, session_date, metric_name, frame) DO NOTHING
-              "))
-              
-              # Drop temp table
-              DBI::dbExecute(con, paste0("DROP TABLE IF EXISTS ", temp_table_name))
-              
-              log_progress("  [SUCCESS] Inserted", result, "new rows (skipped", nrow(warehouse_df) - result, "duplicates)")
-              cat("  [SUCCESS] Insert complete!\n")
-              flush.console()
-              
-              result
+            result
             }, error = function(e) {
               error_msg <- conditionMessage(e)
               log_progress("  [ERROR] Insert failed:", error_msg)
@@ -1679,36 +2205,10 @@ process_all_files <- function(data_root = NULL) {
             } else {
               log_progress("  [INFO] No new rows inserted (all were duplicates)")
             }
-          } else {
-            log_progress("  [SKIPPED] No new rows to insert (all were duplicates)")
-          }
           
-          # Verify write by counting rows
-          row_count <- DBI::dbGetQuery(con, "SELECT COUNT(*) as count FROM f_kinematics_pitching")$count
-          log_progress("  Total rows in table now:", row_count)
-          
-          # Check for duplicates by athlete and session
-          duplicate_check <- DBI::dbGetQuery(con, "
-            SELECT athlete_uuid, session_date, COUNT(*) as cnt
-            FROM f_kinematics_pitching
-            GROUP BY athlete_uuid, session_date
-            HAVING COUNT(*) > 50000
-            ORDER BY cnt DESC
-            LIMIT 5
-          ")
-          if (nrow(duplicate_check) > 0) {
-            log_progress("  [WARNING] Found athletes with unusually high row counts (possible duplicates):")
-            print(duplicate_check)
-          }
-          
-          # Also verify with a sample query
-          sample_data <- DBI::dbGetQuery(con, "SELECT * FROM f_kinematics_pitching LIMIT 5")
-          if (nrow(sample_data) > 0) {
-            log_progress("  Sample data from table:")
-            print(sample_data)
-          } else {
-            log_progress("  [WARNING] Table exists but query returned 0 rows!")
-          }
+          # OPTIMIZED: Skip expensive verification queries - they're not needed for normal operation
+          # Only verify if explicitly requested (can add a flag later if needed)
+          log_progress("  Insert completed successfully")
           
           # Update athlete data flags and session counts
           log_progress("")
@@ -1857,6 +2357,20 @@ process_all_files <- function(data_root = NULL) {
   use_warehouse_final <- use_warehouse
   
   if (use_warehouse_final) {
+    cat("\n")
+    cat("=", rep("=", 80), "\n", sep = "")
+    cat("PROCESSING COMPLETE!\n")
+    cat("=", rep("=", 80), "\n", sep = "")
+    cat("✓ Database: PostgreSQL warehouse (Neon)\n")
+    cat("✓ Athletes stored in: analytics.d_athletes\n")
+    cat("✓ Metrics stored in: f_kinematics_pitching\n")
+    cat("✓ Total athletes processed:", length(athlete_list), "\n")
+    if (exists("warehouse_df") && !is.null(warehouse_df) && nrow(warehouse_df) > 0) {
+      cat("✓ Total metric records:", nrow(warehouse_df), "\n")
+    } else {
+      cat("⚠ Total metric records: 0\n")
+    }
+    cat("=", rep("=", 80), "\n", sep = "")
     log_progress("")
     log_progress("=", rep("=", 60), sep = "")
     log_progress("PROCESSING COMPLETE!")
@@ -1875,6 +2389,23 @@ process_all_files <- function(data_root = NULL) {
     # Get final database size (local SQLite)
     db_size <- if (file.exists(DB_FILE)) file.info(DB_FILE)$size else 0
     
+    cat("\n")
+    cat("=", rep("=", 80), "\n", sep = "")
+    cat("⚠ PROCESSING COMPLETE - BUT DATA WENT TO LOCAL DATABASE! ⚠\n")
+    cat("=", rep("=", 80), "\n", sep = "")
+    cat("⚠ Database: LOCAL SQLite (NOT Neon warehouse!)\n")
+    cat("⚠ Database file:", DB_FILE, "\n")
+    cat("⚠ Database size:", round(db_size / 1024 / 1024, 2), "MB\n")
+    cat("⚠ Total athletes:", length(athlete_list), "\n")
+    if (exists("metric_df") && !is.null(metric_df) && nrow(metric_df) > 0) {
+      cat("⚠ Total metric records:", nrow(metric_df), "\n")
+    } else {
+      cat("⚠ Total metric records: 0\n")
+    }
+    cat("\n")
+    cat("⚠ WARNING: Data was NOT written to Neon warehouse!\n")
+    cat("⚠ Check connection settings and try again to write to Neon.\n")
+    cat("=", rep("=", 80), "\n", sep = "")
     log_progress("")
     log_progress("=", rep("=", 60), sep = "")
     log_progress("PROCESSING COMPLETE!")

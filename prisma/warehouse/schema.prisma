@@ -46,6 +46,8 @@ model DAthletes {
   armActionSessionCount       Int                    @default(0) @map("arm_action_session_count")
   hasCurveballTestData        Boolean                @default(false) @map("has_curveball_test_data")
   curveballTestSessionCount   Int                    @default(0) @map("curveball_test_session_count")
+  hasPitchingTrialData        Boolean                @default(false) @map("has_pitching_trial_data")
+  pitchingTrialCount         Int                    @default(0) @map("pitching_trial_count")
   sourceMappings              DSourceAthleteMap[]
   armAction                   FArmAction[]
   athleticScreen              FAthleticScreen[]
@@ -57,6 +59,7 @@ model DAthletes {
   curveballTest               FCurveballTest[]
   hitting                     FKinematicsHitting[]
   pitching                    FKinematicsPitching[]
+  pitchingTrials              FPitchingTrials[]
   mobility                    FMobility[]
   proSup                      FProSup[]
   proteus                     FProteus[]
@@ -668,6 +671,31 @@ model FKinematicsPitching {
   @@index([sessionDate], map: "idx_f_pitching_date")
   @@index([metricName], map: "idx_f_pitching_metric")
   @@map("f_kinematics_pitching")
+  @@schema("public")
+}
+
+model FPitchingTrials {
+  id                Int       @id @default(autoincrement())
+  athleteUuid       String    @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime  @map("session_date") @db.Date
+  sourceSystem      String    @default("pitching") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?   @map("source_athlete_id") @db.VarChar(100)
+  ownerFilename     String?   @map("owner_filename")
+  trialIndex        Int       @map("trial_index")
+  velocityMph       Decimal?  @map("velocity_mph") @db.Decimal
+  score             Decimal?  @db.Decimal
+  ageAtCollection   Decimal?  @map("age_at_collection") @db.Decimal
+  ageGroup          String?   @map("age_group")
+  metrics           Json      @db.JsonB
+  sessionXmlPath    String?   @map("session_xml_path")
+  sessionDataXmlPath String?  @map("session_data_xml_path")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+
+  @@unique([athleteUuid, sessionDate, trialIndex], map: "idx_f_pitching_trials_unique")
+  @@index([sessionDate], map: "idx_f_pitching_trials_date")
+  @@index([ownerFilename], map: "idx_f_pitching_trials_owner")
+  @@map("f_pitching_trials")
   @@schema("public")
 }
 

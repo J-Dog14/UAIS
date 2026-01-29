@@ -121,6 +121,17 @@ BEGIN
             WHERE ct.athlete_uuid = a.athlete_uuid
         ),
         
+        -- Pitching trials (new trial-level table)
+        has_pitching_trial_data = EXISTS (
+            SELECT 1 FROM public.f_pitching_trials t 
+            WHERE t.athlete_uuid = a.athlete_uuid
+        ),
+        pitching_trial_count = (
+            SELECT COUNT(DISTINCT t.session_date)::INTEGER 
+            FROM public.f_pitching_trials t 
+            WHERE t.athlete_uuid = a.athlete_uuid
+        ),
+        
         updated_at = NOW();
 END;
 $$ LANGUAGE plpgsql;
@@ -254,6 +265,17 @@ BEGIN
             WHERE ct.athlete_uuid = a.athlete_uuid
         ),
         
+        -- Pitching trials (new trial-level table)
+        has_pitching_trial_data = EXISTS (
+            SELECT 1 FROM public.f_pitching_trials t 
+            WHERE t.athlete_uuid = a.athlete_uuid
+        ),
+        pitching_trial_count = (
+            SELECT COUNT(DISTINCT t.session_date)::INTEGER 
+            FROM public.f_pitching_trials t 
+            WHERE t.athlete_uuid = a.athlete_uuid
+        ),
+        
         updated_at = NOW()
     WHERE a.athlete_uuid = affected_uuid;
     
@@ -268,6 +290,13 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_update_flags_pitching ON public.f_kinematics_pitching;
 CREATE TRIGGER trg_update_flags_pitching
     AFTER INSERT OR UPDATE OR DELETE ON public.f_kinematics_pitching
+    FOR EACH ROW
+    EXECUTE FUNCTION trigger_update_athlete_flags();
+
+-- Pitching trials (new trial-level table)
+DROP TRIGGER IF EXISTS trg_update_flags_pitching_trials ON public.f_pitching_trials;
+CREATE TRIGGER trg_update_flags_pitching_trials
+    AFTER INSERT OR UPDATE OR DELETE ON public.f_pitching_trials
     FOR EACH ROW
     EXECUTE FUNCTION trigger_update_athlete_flags();
 

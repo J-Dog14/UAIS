@@ -5,10 +5,14 @@ Backfill age_at_collection and age_group Columns
 This script:
 1. Calculates age_at_collection from session_date and athlete's date_of_birth
 2. Calculates age_group based on age_at_collection:
-   - High School: < 18
-   - College: 18-22 (inclusive)
-   - Pro: > 22
+   - YOUTH: < 14
+   - HIGH SCHOOL: 14-18 (inclusive)
+   - COLLEGE: 18-22 (inclusive)
+   - PRO: 22+
 3. Updates all rows in all fact tables
+
+NOTE: This script is deprecated in favor of backfill_age_and_age_groups.py
+which implements the top-down approach and only stores age_group in d_athletes.
 
 Usage:
     python python/scripts/backfill_age_group_columns.py [--dry-run] [--table TABLE_NAME]
@@ -71,21 +75,29 @@ def calculate_age_group(age_at_collection: Optional[float]) -> Optional[str]:
     """
     Calculate age group based on age at collection.
     
+    Age Group Definitions:
+    - YOUTH: < 13 years
+    - HIGH SCHOOL: 14-18 years (inclusive)
+    - COLLEGE: 18-22 years (inclusive)
+    - PRO: 22+ years
+    
     Args:
         age_at_collection: Age in years at time of collection
         
     Returns:
-        "High School", "College", "Pro", or None
+        "YOUTH", "HIGH SCHOOL", "COLLEGE", "PRO", or None
     """
     if age_at_collection is None:
         return None
     
-    if age_at_collection < 18:
-        return "High School"
-    elif age_at_collection <= 22:
-        return "College"
-    else:
-        return "Pro"
+    if age_at_collection < 13:
+        return "YOUTH"
+    elif 14 <= age_at_collection <= 18:
+        return "HIGH SCHOOL"
+    elif 18 < age_at_collection <= 22:
+        return "COLLEGE"
+    else:  # age_at_collection > 22
+        return "PRO"
 
 
 def get_fact_tables(conn) -> List[str]:
