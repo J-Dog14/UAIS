@@ -686,6 +686,8 @@ model FPitchingTrials {
   score             Decimal?  @db.Decimal
   ageAtCollection   Decimal?  @map("age_at_collection") @db.Decimal
   ageGroup          String?   @map("age_group")
+  height            Decimal?  @db.Decimal
+  weight            Decimal?  @db.Decimal
   metrics           Json      @db.JsonB
   sessionXmlPath    String?   @map("session_xml_path")
   sessionDataXmlPath String?  @map("session_data_xml_path")
