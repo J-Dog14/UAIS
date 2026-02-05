@@ -17,6 +17,7 @@ if str(python_dir) not in sys.path:
 from common.athlete_manager import get_or_create_athlete, get_warehouse_connection
 from common.athlete_manager import normalize_name_for_matching
 from common.athlete_utils import extract_source_athlete_id
+from common.session_xml import get_dob_from_session_xml_next_to_file
 from config import CAPTURE_RATE
 from parsers import parse_events_from_aPlus, parse_aplus_kinematics, parse_file_info
 from utils import compute_score
@@ -78,43 +79,68 @@ def clear_temp_table(conn):
         print(f"Cleared temp table. Remaining records: {count}")
 
 
-def ingest_data(aPlusDataPath: str, aPlusEventsPath: str):
+def _ingest_data_dry_run(events_dict, kinematics):
+    """Print what would be ingested; no DB writes."""
+    athlete_dob_cache = {}
+    seen_athletes = set()
+    row_count = 0
+    print("\n[DRY RUN] Arm Action - would process:\n")
+    for row in kinematics:
+        fn = row.get("filename", "").strip()
+        if not fn:
+            continue
+        p_name, p_date_str, m_type = parse_file_info(fn)
+        if p_name not in athlete_dob_cache:
+            athlete_dob_cache[p_name] = get_dob_from_session_xml_next_to_file(fn)
+        dob = athlete_dob_cache[p_name]
+        if p_name not in seen_athletes:
+            seen_athletes.add(p_name)
+            print(f"  Athlete: {p_name}")
+            print(f"    DOB (session.xml): {dob or '(not found)'}")
+        print(f"    Row: {fn}  |  date={p_date_str}  movement={m_type}")
+        row_count += 1
+    print(f"\n  -> Would create/update {len(seen_athletes)} athlete(s), insert {row_count} row(s) into f_arm_action")
+    print()
+    return []
+
+
+def ingest_data(aPlusDataPath: str, aPlusEventsPath: str, dry_run: bool = False):
     """
     Ingest data into the warehouse f_arm_action table and temp table.
-    
-    This function:
-    1. Parses the input files
-    2. Gets or creates athletes in the warehouse
-    3. Writes data to both temp table (for reports) and warehouse table
-    
+
     Args:
         aPlusDataPath: Path to APlusData.txt file
         aPlusEventsPath: Path to aPlus_events.txt file
+        dry_run: If True, only parse and print what would be done; no DB writes.
     """
     events_dict = parse_events_from_aPlus(aPlusEventsPath, capture_rate=CAPTURE_RATE)
     kinematics = parse_aplus_kinematics(aPlusDataPath)
-    
+
+    if dry_run:
+        return _ingest_data_dry_run(events_dict, kinematics)
+
     conn = get_warehouse_connection()
-    
+
     try:
         # Initialize temp table
         init_temp_table(conn)
-        
+
         # Prepare data for bulk insert
         warehouse_rows = []
         temp_rows = []
         processed_athlete_uuids = set()  # Track unique athlete UUIDs processed
-        
+        athlete_dob_cache = {}  # p_name -> date_of_birth (from session.xml, once per athlete)
+
         processed_count = 0
         for row in kinematics:
             fn = row.get("filename", "").strip()
             if not fn:
                 continue
-            
+
             fc = events_dict.get(fn, {}).get("foot_contact_frame")
             rel = events_dict.get(fn, {}).get("release_frame")
             p_name, p_date_str, m_type = parse_file_info(fn)
-            
+
             # Parse date string to date object
             try:
                 # Try to parse date (format may vary)
@@ -133,14 +159,19 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str):
                     session_date = datetime.now().date()
             except Exception:
                 session_date = datetime.now().date()
-            
+
+            # DOB from session.xml in same folder as file (first row of export has path to .c3d; session.xml is there)
+            if p_name not in athlete_dob_cache:
+                athlete_dob_cache[p_name] = get_dob_from_session_xml_next_to_file(fn)
+
             # Get or create athlete in warehouse
             # Extract source_athlete_id (initials) from name if present
             # e.g., "Cody Yarborough CY" -> "CY", "John Smith" -> "John Smith"
             source_athlete_id = extract_source_athlete_id(p_name)
-            
+
             athlete_uuid = get_or_create_athlete(
                 name=p_name,  # Will be cleaned by get_or_create_athlete (removes initials, dates, etc.)
+                date_of_birth=athlete_dob_cache.get(p_name),
                 source_system="arm_action",
                 source_athlete_id=source_athlete_id  # Use extracted initials or cleaned name
             )

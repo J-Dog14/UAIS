@@ -154,7 +154,12 @@ def parse_movement_file(file_path: str, folder_path: str) -> Optional[dict]:
             first_line = f.readline().strip()
             name = extract_name(first_line)
             date = extract_date(first_line)
-            
+            # First line (or first column) is the source .c3d path, e.g. D:\Athletic Screen 2.0\Data\Name_ID\2026-01-23_\CMJ 1.c3d
+            # Used to find session.xml in the same session folder for DOB
+            source_path = first_line.split('\t')[0].strip() if first_line else None
+            if source_path and not os.path.isabs(source_path):
+                source_path = os.path.normpath(os.path.join(os.path.dirname(file_path), source_path))
+
             if not name:
                 print(f"Name extraction failed for {os.path.basename(file_path)}, skipping.")
                 return None
@@ -172,7 +177,8 @@ def parse_movement_file(file_path: str, folder_path: str) -> Optional[dict]:
                 'name': name,
                 'date': date,
                 'trial_name': trial_name,
-                'movement_type': movement_type
+                'movement_type': movement_type,
+                'source_path': source_path,
             }
 
             if movement_type in ('CMJ', 'PPU'):

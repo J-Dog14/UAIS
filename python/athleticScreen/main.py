@@ -21,6 +21,7 @@ from common.athlete_manager import get_warehouse_connection, get_or_create_athle
 from common.athlete_matcher import update_athlete_data_flag
 from common.athlete_utils import extract_source_athlete_id
 from common.duplicate_detector import check_and_merge_duplicates
+from common.session_xml import get_dob_from_session_xml_next_to_file
 from file_parsers import parse_movement_file
 from power_analysis import load_power_txt, analyze_power_curve_advanced
 
@@ -72,11 +73,11 @@ def _safe_convert_to_python_type(val):
 def calculate_age_group(session_date, dob_date):
     """
     Calculate age group based on age at session date.
-    
+
     Args:
         session_date: Date of the session
         dob_date: Date of birth
-    
+
     Returns:
         Age group string (U17, U19, U23, 23+) or None
     """
@@ -94,47 +95,92 @@ def calculate_age_group(session_date, dob_date):
         return None
 
 
-def process_txt_files(folder_path: str):
+def _process_txt_files_dry_run(folder_path: str, txt_files: list) -> list:
+    """Parse all txt files and print what would be done; no DB or file moves."""
+    seen_athletes = set()  # (name, date_str)
+    processed = []
+    errors = []
+    for file_path in txt_files:
+        file_name = os.path.basename(file_path)
+        print(f"\n  {file_name}")
+        parsed_data = parse_movement_file(file_path, folder_path)
+        if not parsed_data:
+            print(f"     Skip: failed to parse")
+            errors.append(file_path)
+            continue
+        name = parsed_data.get("name")
+        date_str = parsed_data.get("date")
+        movement_type = parsed_data.get("movement_type")
+        source_path = parsed_data.get("source_path")
+        if not name or not date_str or not movement_type:
+            print(f"     Skip: missing name/date/movement_type")
+            errors.append(file_path)
+            continue
+        date_of_birth = get_dob_from_session_xml_next_to_file(source_path) if source_path else None
+        print(f"     Name: {name}")
+        print(f"     Date: {date_str}  |  Movement: {movement_type}")
+        print(f"     Source path: {source_path or '(none)'}")
+        print(f"     DOB from session.xml: {date_of_birth or '(not found)'}")
+        athlete_key = (name, date_str)
+        if athlete_key not in seen_athletes:
+            seen_athletes.add(athlete_key)
+            print(f"     -> Would create/update athlete in warehouse")
+        pg_table = MOVEMENT_TO_PG_TABLE.get(movement_type, "?")
+        print(f"     -> Would upsert row into public.{pg_table}")
+        processed.append((name, "(dry-run)", file_name))
+    print("\n" + "-" * 60)
+    print(f"DRY RUN SUMMARY: {len(processed)} file(s) would be processed, {len(seen_athletes)} unique athlete(s)")
+    if errors:
+        print(f"  Skipped/errors: {len(errors)}")
+    print("-" * 60)
+    return processed
+
+
+def process_txt_files(folder_path: str, dry_run: bool = False):
     """
     Process all txt files from folder and insert into PostgreSQL.
     Extracts name and date from first line of each txt file.
-    
+
     Args:
         folder_path: Path to directory containing txt files (e.g., 'D:/Athletic Screen 2.0/Output Files/')
-    
+        dry_run: If True, only parse and print what would be done; no DB writes, no file moves.
+
     Returns:
-        List of tuples (athlete_name, athlete_uuid) for processed files.
+        List of tuples (athlete_name, athlete_uuid) for processed files (uuid is placeholder in dry_run).
     """
     print("=" * 60)
     print("Athletic Screen Data Processing to PostgreSQL")
+    if dry_run:
+        print("  [DRY RUN - no database writes, no file moves]")
     print("=" * 60)
     print(f"\nScanning directory: {folder_path}")
-    
+
     if not os.path.exists(folder_path):
         raise ValueError(f"Directory not found: {folder_path}")
-    
-    # Connect to PostgreSQL
-    print("Connecting to PostgreSQL warehouse...")
-    pg_conn = get_warehouse_connection()
-    
+
     # Find all txt files (excluding Power.txt files)
     txt_files = []
     for file_name in os.listdir(folder_path):
         if not file_name.endswith('.txt'):
             continue
         if file_name.endswith('_Power.txt'):
-            # Power files handled separately (if needed)
             continue
 
         file_path = os.path.join(folder_path, file_name)
         txt_files.append(file_path)
-    
+
     if not txt_files:
         print("No txt files found in directory.")
-        pg_conn.close()
         return []
-    
+
     print(f"Found {len(txt_files)} txt files to process")
+
+    if dry_run:
+        return _process_txt_files_dry_run(folder_path, txt_files)
+
+    # Connect to PostgreSQL
+    print("Connecting to PostgreSQL warehouse...")
+    pg_conn = get_warehouse_connection()
     
     # Process each txt file
     processed_athletes = {}  # Track athletes by (name, date) -> athlete_uuid
@@ -181,9 +227,12 @@ def process_txt_files(folder_path: str):
                 try:
                     # Extract source_athlete_id (initials if present, otherwise cleaned name)
                     source_athlete_id = extract_source_athlete_id(name)
-                    
+                    # DOB from session.xml in the session folder (first line of txt has path to .c3d; session.xml is same folder)
+                    date_of_birth = get_dob_from_session_xml_next_to_file(parsed_data.get("source_path")) if parsed_data.get("source_path") else None
+
                     athlete_uuid = get_or_create_athlete(
                         name=name,  # Will be cleaned by get_or_create_athlete (removes dates, initials, etc.)
+                        date_of_birth=date_of_birth,
                         source_system="athletic_screen",
                         source_athlete_id=source_athlete_id
                     )
@@ -646,34 +695,36 @@ def main():
     Main execution function.
     Configure paths and processing options here.
     """
+    import argparse
+    parser = argparse.ArgumentParser(description="Athletic Screen data processing to PostgreSQL")
+    parser.add_argument("--dry-run", action="store_true", help="Parse and print what would be done; no DB writes, no file moves")
+    args = parser.parse_args()
+
     # Get paths from config (or use defaults)
     try:
         raw_paths = get_raw_paths()
         folder_path = raw_paths.get('athletic_screen', os.getenv('ATHLETIC_SCREEN_DATA_DIR', r'D:/Athletic Screen 2.0/Output Files/'))
-    except:
+    except Exception:
         folder_path = os.getenv('ATHLETIC_SCREEN_DATA_DIR', r'D:/Athletic Screen 2.0/Output Files/')
-    
+
     # Ensure folder path exists
     if 'path/to' in folder_path or not os.path.exists(folder_path):
         folder_path = os.getenv('ATHLETIC_SCREEN_DATA_DIR', r'D:/Athletic Screen 2.0/Output Files/')
-    
+
     folder_path = os.path.abspath(folder_path)
-    
+
     # Processing options
     BATCH_PROCESS = True  # Process all files in directory
-    
+
     if BATCH_PROCESS:
-        # Process all txt files from Output Files directory
-        # Extract name and date from first line of each txt file
-        # Insert directly into PostgreSQL
-        processed = process_txt_files(folder_path)
-        
+        processed = process_txt_files(folder_path, dry_run=args.dry_run)
+
         if not processed:
             print("No files were processed.")
             return
-        
+
         print("\n" + "=" * 60)
-        print("All processing complete!")
+        print("All processing complete!" if not args.dry_run else "Dry run complete.")
         print("=" * 60)
     else:
         print("Batch processing is disabled. Set BATCH_PROCESS = True to process all files.")

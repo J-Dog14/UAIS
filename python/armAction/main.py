@@ -23,12 +23,38 @@ from common.duplicate_detector import check_and_merge_duplicates
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Action Plus movement analysis (Youth Pitch Design)")
+    parser.add_argument("--dry-run", action="store_true", help="Parse and print what would be ingested; no DB writes, no report")
+    args = parser.parse_args()
+
     print("=" * 80)
     print("ACTION PLUS MOVEMENT ANALYSIS")
+    if args.dry_run:
+        print("  [DRY RUN - no database writes, no report]")
     print("=" * 80)
     print("Integrated with UAIS Warehouse Database")
     print()
-    
+
+    if not os.path.exists(APLUS_DATA_PATH):
+        print(f"ERROR: Data file not found: {APLUS_DATA_PATH}")
+        sys.exit(1)
+
+    if not os.path.exists(APLUS_EVENTS_PATH):
+        print(f"ERROR: Events file not found: {APLUS_EVENTS_PATH}")
+        sys.exit(1)
+
+    print(f"Reading data from:")
+    print(f"  Events: {APLUS_EVENTS_PATH}")
+    print(f"  Kinematics: {APLUS_DATA_PATH}\n")
+
+    if args.dry_run:
+        ingest_data(APLUS_DATA_PATH, APLUS_EVENTS_PATH, dry_run=True)
+        print("=" * 80)
+        print("Dry run complete.")
+        print("=" * 80)
+        sys.exit(0)
+
     # Get warehouse connection to verify it works
     try:
         conn = get_warehouse_connection()
@@ -38,9 +64,9 @@ if __name__ == "__main__":
         print(f"ERROR: Failed to connect to warehouse database: {e}")
         print("Please check your database configuration in config/db_connections.yaml")
         sys.exit(1)
-    
+
     print()
-    
+
     # Initialize temp table for current session data
     print("Initializing temporary table for current session...")
     conn = get_warehouse_connection()
@@ -50,32 +76,19 @@ if __name__ == "__main__":
     finally:
         conn.close()
     print("Temporary table initialized.\n")
-    
+
     # Initialize athletes (no-op now, but kept for compatibility)
     print("Initializing athlete management...")
     init_athletes_db()
     print("Athlete management initialized.\n")
-    
-    # Ingest data
-    print(f"Reading data from:")
-    print(f"  Events: {APLUS_EVENTS_PATH}")
-    print(f"  Kinematics: {APLUS_DATA_PATH}\n")
-    
-    if not os.path.exists(APLUS_DATA_PATH):
-        print(f"ERROR: Data file not found: {APLUS_DATA_PATH}")
-        sys.exit(1)
-    
-    if not os.path.exists(APLUS_EVENTS_PATH):
-        print(f"ERROR: Events file not found: {APLUS_EVENTS_PATH}")
-        sys.exit(1)
-    
+
     print("Ingesting movement data into warehouse...")
     processed_athlete_uuids = ingest_data(APLUS_DATA_PATH, APLUS_EVENTS_PATH)
-    
+
     # Update athletes summary table with aggregated statistics
     print("\nUpdating athlete flags in warehouse...")
     update_athletes_summary()
-    
+
     # Check for duplicate athletes and prompt to merge (only check current athletes)
     if processed_athlete_uuids:
         print(f"\nChecking {len(processed_athlete_uuids)} newly processed athlete(s) for similar names...")
@@ -89,11 +102,11 @@ if __name__ == "__main__":
             traceback.print_exc()
     else:
         print("\nNo athletes processed, skipping duplicate check.")
-    
+
     # Generate report
     print("\nGenerating PDF report...")
     generate_movement_report()
-    
+
     print("\n" + "=" * 80)
     print("Analysis complete!")
     print("=" * 80)

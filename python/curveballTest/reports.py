@@ -174,17 +174,31 @@ def generate_curve_report():
     # -------------------------------------------
     # 3) CREATE PDF (WITH A BIGGER PAGE)
     # -------------------------------------------
-    # Generate filename, adding a number suffix if file already exists
+    # Try D: (OUTPUT_DIR) first, then G: (OUTPUT_DIR_TWO) if permission denied (e.g. network drive from laptop)
     base_filename = f"{participant_name} {test_date} Curve Ball Report.pdf"
-    pdf_path = os.path.join(OUTPUT_DIR, base_filename)
-    
-    # If file exists, add a number suffix (e.g., "Report (1).pdf", "Report (2).pdf")
-    counter = 1
-    while os.path.exists(pdf_path):
-        name_without_ext = base_filename.replace(".pdf", "")
-        pdf_path = os.path.join(OUTPUT_DIR, f"{name_without_ext} ({counter}).pdf")
-        counter += 1
-    
+
+    def _pick_writable_path():
+        for output_dir in (OUTPUT_DIR, OUTPUT_DIR_TWO):
+            os.makedirs(output_dir, exist_ok=True)
+            path = os.path.join(output_dir, base_filename)
+            counter = 1
+            while os.path.exists(path):
+                name_without_ext = base_filename.replace(".pdf", "")
+                path = os.path.join(output_dir, f"{name_without_ext} ({counter}).pdf")
+                counter += 1
+            try:
+                with open(path, "wb") as _:
+                    pass
+                os.remove(path)
+                return path, output_dir
+            except (PermissionError, OSError):
+                continue
+        return os.path.join(OUTPUT_DIR, base_filename), OUTPUT_DIR
+
+    pdf_path, pdf_output_dir = _pick_writable_path()
+    if pdf_output_dir == OUTPUT_DIR_TWO:
+        print(f"Using G: drive (D: not writable): {pdf_path}")
+
     # We'll define a custom page ~ 1600×1200 px for extra space
     page_width, page_height = 2000, 2000
     c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
@@ -372,10 +386,13 @@ def generate_curve_report():
     c.save()
     print(f"PDF saved to: {pdf_path}")
 
-    # Copy to secondary output directory
-    for extra_dir in (OUTPUT_DIR_TWO,):
-        os.makedirs(extra_dir, exist_ok=True)
-        shutil.copy2(pdf_path, os.path.join(extra_dir, os.path.basename(pdf_path)))
+    # Copy to the other output directory only if we didn't already write there (and if it's writable)
+    if pdf_output_dir == OUTPUT_DIR:
+        try:
+            os.makedirs(OUTPUT_DIR_TWO, exist_ok=True)
+            shutil.copy2(pdf_path, os.path.join(OUTPUT_DIR_TWO, os.path.basename(pdf_path)))
+        except (PermissionError, OSError):
+            print("Could not copy to G: (secondary); PDF is only on D:.")
 
 
 def build_time_series_figure(df_curves, title, prefix, color, df_reference=None, force_axis_start_at_zero=True):

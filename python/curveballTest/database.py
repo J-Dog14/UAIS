@@ -16,6 +16,7 @@ if str(python_dir) not in sys.path:
 from common.athlete_manager import get_or_create_athlete, get_warehouse_connection
 from common.athlete_manager import normalize_name_for_matching
 from common.athlete_utils import extract_source_athlete_id
+from common.session_xml import get_dob_from_session_xml_next_to_file
 from config import LINK_MODEL_BASED_PATH, ACCEL_DATA_PATH
 from parsers import parse_events, parse_link_model_based_long, parse_accel_long
 from utils import compute_pitch_stability_score, parse_file_info
@@ -86,25 +87,43 @@ def clear_temp_table(conn):
         print(f"Cleared temp table. Remaining records: {count}")
 
 
-def ingest_pitches_with_events(events_dict):
+def _ingest_pitches_dry_run(events_dict):
+    """Print what would be ingested; no DB writes."""
+    athlete_dob_cache = {}
+    seen_athletes = set()
+    print("\n[DRY RUN] Curveball Test - would process:\n")
+    for pitch_fp in events_dict.keys():
+        p_name, p_date_str, pitch_type = parse_file_info(pitch_fp)
+        if p_name not in athlete_dob_cache:
+            athlete_dob_cache[p_name] = get_dob_from_session_xml_next_to_file(pitch_fp)
+        dob = athlete_dob_cache[p_name]
+        if p_name not in seen_athletes:
+            seen_athletes.add(p_name)
+            print(f"  Athlete: {p_name}")
+            print(f"    DOB (session.xml): {dob or '(not found)'}")
+        print(f"    Pitch: {pitch_fp}  |  date={p_date_str}  type={pitch_type}")
+    print(f"\n  -> Would create/update {len(seen_athletes)} athlete(s), insert {len(events_dict)} row(s) into f_curveball_test")
+    print()
+    return []
+
+
+def ingest_pitches_with_events(events_dict, dry_run: bool = False):
     """
     Ingest new pitch data into the warehouse f_curveball_test table.
-    
-    This function:
-    1. Parses the input files
-    2. Gets or creates athletes in the warehouse
-    3. Writes data to both temp table (for reports) and warehouse table
-    4. Uses individual columns for all angle/accel data (not JSONB)
-    
+
     Args:
         events_dict: Dictionary mapping pitch filenames to their foot_contact_frame and release_frame
+        dry_run: If True, only parse and print what would be done; no DB writes.
     """
+    if dry_run:
+        return _ingest_pitches_dry_run(events_dict)
+
     conn = get_warehouse_connection()
-    
+
     try:
         # Initialize temp table
         init_temp_table(conn)
-        
+
         # Parse data files
         df_angles = parse_link_model_based_long(LINK_MODEL_BASED_PATH)
         df_accel = parse_accel_long(ACCEL_DATA_PATH)
@@ -143,32 +162,37 @@ def ingest_pitches_with_events(events_dict):
         
         temp_rows = []
         processed_athlete_uuids = set()  # Track unique athlete UUIDs processed
-        
+        athlete_dob_cache = {}  # p_name -> date_of_birth (from session.xml, once per athlete)
+
         print(f"Processing {len(events_dict)} regular pitches")
-        
+
         for pitch_idx, pitch_fp in enumerate(events_dict.keys()):
             foot_fr = events_dict[pitch_fp]["foot_contact_frame"]
             release_fr = events_dict[pitch_fp]["release_frame"]
             pitch_num = pitch_idx + 1
-            
+
             x_col = f"x_p{pitch_num}"
             y_col = f"y_p{pitch_num}"
             z_col = f"z_p{pitch_num}"
             ax_col = f"ax_p{pitch_num}"
             ay_col = f"ay_p{pitch_num}"
             az_col = f"az_p{pitch_num}"
-            
+
             if x_col not in df_merged.columns:
                 print(f"WARNING: Skipping {pitch_fp}, missing {x_col}")
                 continue
-            
+
             start_fr = release_fr - 20
             end_fr = release_fr + 30
             slice_df = df_merged[(df_merged["frame"] >= start_fr) & (df_merged["frame"] <= end_fr)]
-            
+
             # Parse file info
             p_name, p_date_str, pitch_type = parse_file_info(pitch_fp)
-            
+
+            # DOB from session.xml in same folder as file (first row of export has path to .c3d; session.xml is there)
+            if p_name not in athlete_dob_cache:
+                athlete_dob_cache[p_name] = get_dob_from_session_xml_next_to_file(pitch_fp)
+
             # Parse date string to date object
             try:
                 if p_date_str and p_date_str != "UnknownDate":
@@ -184,13 +208,14 @@ def ingest_pitches_with_events(events_dict):
                     session_date = datetime.now().date()
             except Exception:
                 session_date = datetime.now().date()
-            
+
             # Get or create athlete in warehouse
             # Extract source_athlete_id (initials if present, otherwise cleaned name)
             source_athlete_id = extract_source_athlete_id(p_name)
-            
+
             athlete_uuid = get_or_create_athlete(
                 name=p_name,  # Will be cleaned by get_or_create_athlete (removes dates, initials, etc.)
+                date_of_birth=athlete_dob_cache.get(p_name),
                 source_system="curveball_test",
                 source_athlete_id=source_athlete_id
             )

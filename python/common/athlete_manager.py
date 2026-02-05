@@ -39,17 +39,25 @@ import yaml
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(levelname)s:%(name)s:%(message)s')
 logger = logging.getLogger(__name__)
 
-# Import age utilities for automatic age/age_group calculation
+# Import age utilities for automatic age/age_group calculation (same package)
 try:
-    from python.common.age_utils import (
+    from common.age_utils import (
         calculate_age,
         calculate_age_group,
         parse_date
     )
     AGE_UTILS_AVAILABLE = True
 except ImportError:
-    AGE_UTILS_AVAILABLE = False
-    logger.warning("age_utils module not available - age/age_group will not be auto-calculated")
+    try:
+        from .age_utils import (
+            calculate_age,
+            calculate_age_group,
+            parse_date
+        )
+        AGE_UTILS_AVAILABLE = True
+    except ImportError:
+        AGE_UTILS_AVAILABLE = False
+        logger.warning("age_utils module not available - age/age_group will not be auto-calculated")
 
 
 def normalize_name_for_display(name: str) -> str:
@@ -489,7 +497,10 @@ def create_athlete_in_warehouse(
                 if calculated_age is not None:
                     calculated_age_group = calculate_age_group(calculated_age)
                     logger.debug(f"Auto-calculated age={calculated_age:.2f}, age_group={calculated_age_group} from DOB")
-        
+        # Default age_group to YOUTH for arm_action/curveball_test when DOB is missing
+        if calculated_age_group is None and source_system in ("arm_action", "curveball_test"):
+            calculated_age_group = "YOUTH"
+
         with conn.cursor() as cur:
             # Use UPSERT to handle duplicate UUIDs gracefully
             # This prevents "duplicate key value violates unique constraint" errors
@@ -577,6 +588,7 @@ def update_athlete_in_warehouse(
     date_of_birth: Optional[str] = None,
     age: Optional[float] = None,
     age_at_collection: Optional[float] = None,
+    age_group: Optional[str] = None,
     gender: Optional[str] = None,
     height: Optional[float] = None,
     weight: Optional[float] = None,
@@ -655,7 +667,11 @@ def update_athlete_in_warehouse(
         if calculated_age_group is not None:
             updates.append("age_group = %s")
             params.append(calculated_age_group)
-        
+        # Optional explicit age_group (e.g. default YOUTH for arm_action/curveball when DOB missing); only set if current is NULL
+        if age_group is not None:
+            updates.append("age_group = COALESCE(age_group, %s)")
+            params.append(age_group)
+
         if gender is not None:
             updates.append("gender = COALESCE(gender, %s)")
             params.append(gender)
@@ -776,12 +792,16 @@ def get_or_create_athlete(
             # Convert name to "First Last" format if provided
             display_name = normalize_name_for_display(name) if name else None
             
+            # Default age_group to YOUTH for arm_action/curveball when DOB is missing (only fills if current is NULL)
+            default_age_group = "YOUTH" if (date_of_birth is None and source_system in ("arm_action", "curveball_test")) else None
+
             update_athlete_in_warehouse(
                 existing['athlete_uuid'],
                 name=display_name,  # Store as "First Last" format
                 date_of_birth=date_of_birth,
                 age=age,
                 age_at_collection=age_at_collection,
+                age_group=default_age_group,
                 gender=gender,
                 height=height,
                 weight=weight,

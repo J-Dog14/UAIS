@@ -4,6 +4,8 @@
 
 **Important:** Changes to `schema.prisma` do NOT automatically apply to your database. You must create and apply migrations.
 
+**Using the warehouse DB (Neon / production)?** Use **only** `migrate deploy` when applying to that database—never `migrate dev`, or you risk a reset that deletes data. See [Warehouse Prisma: migrate dev vs deploy](warehouse-prisma-dev-vs-deploy.md) for the full rule and the difference between the two commands.
+
 ## Workflow for Making Changes
 
 ### Step 1: Edit the Schema File

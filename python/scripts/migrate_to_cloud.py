@@ -122,8 +122,11 @@ def test_connection(conn_str: str) -> bool:
 
 
 def migrate_database(source_conn_str: str, target_conn_str: str, 
-                    db_name: str, dry_run: bool = False):
-    """Migrate database from source to target"""
+                    db_name: str, dry_run: bool = False, confirm: bool = True):
+    """Migrate database from source to target.
+    
+    When confirm=False, skips the interactive confirmation (for automated use).
+    """
     
     pg_dump_path = find_pg_dump()
     psql_path = find_psql()
@@ -143,26 +146,27 @@ def migrate_database(source_conn_str: str, target_conn_str: str,
         print("\n[DRY RUN] Would execute:")
         print(f"  pg_dump {source_conn_str.split('@')[0]}@...")
         print(f"  psql {target_conn_str.split('@')[0]}@...")
-        return
+        return True
     
     # Test connections
     print("\nTesting connections...")
     if not test_connection(source_conn_str):
         print("  [ERROR] Source connection failed")
-        return
+        return False
     print("  [OK] Source connection OK")
     
     if not test_connection(target_conn_str):
         print("  [ERROR] Target connection failed")
-        return
+        return False
     print("  [OK] Target connection OK")
     
-    # Confirm
-    print("\n[WARNING] This will overwrite data in the target database!")
-    response = input("Continue? (yes/no): ")
-    if response.lower() != 'yes':
-        print("Migration cancelled.")
-        return
+    # Confirm (unless --yes / confirm=False)
+    if confirm:
+        print("\n[WARNING] This will overwrite data in the target database!")
+        response = input("Continue? (yes/no): ")
+        if response.lower() != 'yes':
+            print("Migration cancelled.")
+            return False
     
     # Export from source
     print("\nExporting from source database...")
@@ -194,7 +198,7 @@ def migrate_database(source_conn_str: str, target_conn_str: str,
         print(f"  [ERROR] Export failed: {e.stderr}")
         if dump_file.exists():
             dump_file.unlink()
-        return
+        return False
     
     # Import to target
     print("\nImporting to target database...")
@@ -232,69 +236,78 @@ def migrate_database(source_conn_str: str, target_conn_str: str,
     except subprocess.CalledProcessError as e:
         print(f"  [ERROR] Import failed: {e.stderr}")
         print(f"  Error output: {e.stdout}")
-        return
+        return False
     finally:
         # Clean up
         if dump_file.exists():
             dump_file.unlink()
     
     print(f"\n[OK] Migration complete!")
+    return True
 
 
 def main():
     parser = argparse.ArgumentParser(description="Migrate database to cloud")
     parser.add_argument('--source', type=str, required=True, 
-                       choices=['local'], help='Source database location')
+                       choices=['local', 'neon'], help='Source database location')
     parser.add_argument('--target', type=str, required=True,
                        choices=['vercel', 'neon'], help='Target cloud provider')
     parser.add_argument('--db', type=str, required=True,
                        choices=['app', 'warehouse'], help='Database to migrate')
     parser.add_argument('--dry-run', action='store_true',
                        help='Show what would be done without executing')
+    parser.add_argument('--yes', '-y', action='store_true',
+                       help='Skip confirmation prompt (for automation)')
     parser.add_argument('--source-conn', type=str, default=None,
-                       help='Source connection string (overrides config)')
+                       help='Source connection string (overrides config; required for source=neon)')
     parser.add_argument('--target-conn', type=str, default=None,
-                       help='Target connection string (overrides config)')
+                       help='Target connection string (overrides config; required for target=neon when copying between branches)')
     args = parser.parse_args()
     
-    # Load config
-    try:
-        config = load_config()
-    except Exception as e:
-        print(f"Error loading config: {e}")
-        sys.exit(1)
-    
-    # Get source connection string
-    if args.source_conn:
-        source_conn_str = args.source_conn
-    else:
-        source_conn_str = get_connection_string_from_config(args.db, config)
-        if not source_conn_str:
-            print(f"Error: Could not find source connection for {args.db}")
-            print("Please provide --source-conn or update config file")
+    # Neon-to-Neon (branch copy) requires both connection strings
+    if args.source == 'neon' and args.target == 'neon':
+        if not args.source_conn or not args.target_conn:
+            print("Error: For neon-to-neon copy, both --source-conn and --target-conn are required.")
             sys.exit(1)
-    
-    # Get target connection string
-    if args.target_conn:
+        source_conn_str = args.source_conn
         target_conn_str = args.target_conn
     else:
-        # Try environment variable first
-        env_var = f"{args.db.upper()}_DATABASE_URL"
-        target_conn_str = os.environ.get(env_var)
-        
-        if not target_conn_str:
-            print(f"\nError: Target connection string not found.")
-            print(f"Please provide --target-conn or set {env_var} environment variable")
-            print(f"\nExample:")
-            if args.target == 'vercel':
-                print(f'  {env_var}="postgres://user:pass@host:5432/db?sslmode=require"')
-            else:
-                print(f'  {env_var}="postgres://user:pass@ep-xxx.region.aws.neon.tech/db?sslmode=require"')
+        # Load config when using local source
+        try:
+            config = load_config()
+        except Exception as e:
+            print(f"Error loading config: {e}")
             sys.exit(1)
+        
+        # Get source connection string
+        if args.source_conn:
+            source_conn_str = args.source_conn
+        else:
+            source_conn_str = get_connection_string_from_config(args.db, config)
+            if not source_conn_str:
+                print(f"Error: Could not find source connection for {args.db}")
+                print("Please provide --source-conn or update config file")
+                sys.exit(1)
+        
+        # Get target connection string
+        if args.target_conn:
+            target_conn_str = args.target_conn
+        else:
+            env_var = f"{args.db.upper()}_DATABASE_URL"
+            target_conn_str = os.environ.get(env_var)
+            if not target_conn_str:
+                print(f"\nError: Target connection string not found.")
+                print(f"Please provide --target-conn or set {env_var} environment variable")
+                sys.exit(1)
     
     # Perform migration
     try:
-        migrate_database(source_conn_str, target_conn_str, args.db, args.dry_run)
+        ok = migrate_database(
+            source_conn_str, target_conn_str, args.db,
+            dry_run=args.dry_run, confirm=not args.yes
+        )
+        if ok is False:
+            sys.exit(1)
     except Exception as e:
         print(f"\nError: {e}")
         sys.exit(1)
