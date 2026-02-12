@@ -300,6 +300,24 @@ get_uuid_by_name <- function(name, uuid_map) {
   
   return(NA_character_)
 }
+
+#' Calculate age group from age_at_collection (vectorized)
+#' Matches Python age_utils.calculate_age_group() logic
+#' @param age_at_collection Age(s) at time of data collection (numeric vector)
+#' @return Age group string(s): "YOUTH", "HIGH SCHOOL", "COLLEGE", "PRO", or NA
+calculate_age_group_from_age <- function(age_at_collection) {
+  out <- rep(NA_character_, length(age_at_collection))
+  not_na <- !is.na(age_at_collection)
+  a <- age_at_collection[not_na]
+  out[not_na] <- dplyr::case_when(
+    a < 13 ~ "YOUTH",
+    a >= 14 & a <= 18 ~ "HIGH SCHOOL",
+    a > 18 & a <= 22 ~ "COLLEGE",
+    TRUE ~ "PRO"
+  )
+  out
+}
+
 read_xml_robust <- function(path) {
   tryCatch(
     {
@@ -677,10 +695,19 @@ process_all_files <- function(data_root = NULL) {
   })
   session_data_files <- c(session_data_files, session_data_files_gz)
   
+  # Find JSON data files (e.g. 3d-data exports)
+  log_progress("Searching for JSON data files...")
+  json_files <- tryCatch({
+    list.files(root_dir, pattern = "\\.json$", recursive = TRUE, full.names = TRUE)
+  }, error = function(e) {
+    log_progress("  [WARNING] Could not search for JSON files:", conditionMessage(e))
+    character(0)
+  })
   log_progress("Found", length(session_files), "session.xml files")
   log_progress("Found", length(session_data_files), "session_data.xml files")
+  log_progress("Found", length(json_files), "JSON files")
   
-  if (length(session_files) == 0 && length(session_data_files) == 0) {
+  if (length(session_files) == 0 && length(session_data_files) == 0 && length(json_files) == 0) {
     log_progress("ERROR: No XML files found in", root_dir)
     log_progress("Trying alternative search...")
     # Try without recursive
@@ -688,8 +715,8 @@ process_all_files <- function(data_root = NULL) {
     session_data_files <- list.files(root_dir, pattern = "(?i)session_data\\.xml$", recursive = FALSE, full.names = TRUE)
     log_progress("Found (non-recursive):", length(session_files), "session.xml,", length(session_data_files), "session_data.xml")
     
-    if (length(session_files) == 0 && length(session_data_files) == 0) {
-      stop("No XML files found in ", root_dir)
+    if (length(session_files) == 0 && length(session_data_files) == 0 && length(json_files) == 0) {
+      stop("No XML or JSON files found in ", root_dir)
     }
   }
   
@@ -1360,6 +1387,177 @@ process_all_files <- function(data_root = NULL) {
       cat("  [SUCCESS] Session dates assigned!\n")
       flush.console()
       
+      # ---------- Build uuid -> age/height/weight for f_hitting_trials ----------
+      uuid_to_age_df <- tibble(
+        uid = character(),
+        age_at_collection = numeric(),
+        height = numeric(),
+        weight = numeric()
+      )
+      for (athlete_info in athlete_list) {
+        if (nrow(athlete_info) > 0 && "uid" %in% names(athlete_info)) {
+          athlete_uuid <- athlete_info$uid[1]
+          age_at_collection <- if (!is.na(athlete_info$age_at_collection[1])) as.numeric(athlete_info$age_at_collection[1]) else NA_real_
+          height <- if ("height" %in% names(athlete_info)) as.numeric(athlete_info$height[1]) else NA_real_
+          weight <- if ("weight" %in% names(athlete_info)) as.numeric(athlete_info$weight[1]) else NA_real_
+          uuid_to_age_df <- bind_rows(
+            uuid_to_age_df,
+            tibble(
+              uid = athlete_uuid,
+              age_at_collection = age_at_collection,
+              height = height,
+              weight = weight
+            )
+          )
+        }
+      }
+      log_progress("  Mapped", nrow(uuid_to_age_df), "athletes with age/height/weight for f_hitting_trials")
+      
+      # ---------- Build trial-level rows for f_hitting_trials (from session_data.xml) ----------
+      if (requireNamespace("jsonlite", quietly = TRUE) && length(metric_data_list) > 0) {
+        log_progress("  Building trial-level rows for f_hitting_trials...")
+        default_date <- Sys.Date()
+        trial_rows <- list()
+        for (idx in seq_along(metric_data_list)) {
+          df <- metric_data_list[[idx]]
+          if (nrow(df) == 0) next
+          path_dir <- normalizePath(dirname(df$source_path[1]), winslash = "/", mustWork = FALSE)
+          session_date <- path_to_date_map[[path_dir]]
+          if (is.null(session_date)) session_date <- default_date
+          uid <- df$uid[1]
+          age_row <- uuid_to_age_df %>% filter(.data$uid == !!uid)
+          age_at_collection <- if (nrow(age_row) > 0) age_row$age_at_collection[1] else NA_real_
+          age_group <- if (!is.na(age_at_collection)) calculate_age_group_from_age(age_at_collection) else NA_character_
+          height <- if (nrow(age_row) > 0) age_row$height[1] else NA_real_
+          weight <- if (nrow(age_row) > 0) age_row$weight[1] else NA_real_
+          # Build metrics as named list: "folder.variable" -> numeric vector of values
+          value_cols <- grep("^value_\\d+$", names(df), value = TRUE)
+          metrics_list <- list()
+          for (r in seq_len(nrow(df))) {
+            key <- paste(df$folder[r], df$variable[r], sep = ".")
+            metrics_list[[key]] <- as.numeric(df[r, value_cols])
+          }
+          metrics_json <- jsonlite::toJSON(metrics_list, auto_unbox = TRUE, digits = 8)
+          metrics_json <- as.character(metrics_json)
+          session_xml_path <- file.path(dirname(df$source_path[1]), "session.xml")
+          trial_rows[[length(trial_rows) + 1]] <- tibble(
+            idx = idx,
+            athlete_uuid = uid,
+            session_date = session_date,
+            source_athlete_id = df$athlete_id[1],
+            owner_filename = df$owner[1],
+            age_at_collection = age_at_collection,
+            age_group = age_group,
+            height = height,
+            weight = weight,
+            metrics_json = metrics_json,
+            session_xml_path = session_xml_path,
+            session_data_xml_path = df$source_path[1]
+          )
+        }
+        if (length(trial_rows) > 0) {
+          trials_df <- bind_rows(trial_rows) %>%
+            group_by(.data$athlete_uuid, .data$session_date) %>%
+            arrange(.data$idx) %>%
+            mutate(trial_index = row_number() - 1L) %>%
+            ungroup() %>%
+            select(athlete_uuid, session_date, source_athlete_id, owner_filename, trial_index,
+                   age_at_collection, age_group, height, weight, metrics_json,
+                   session_xml_path, session_data_xml_path)
+          log_progress("  Built", nrow(trials_df), "trial rows for f_hitting_trials")
+          # Ensure f_hitting_trials table exists
+          trials_table_exists <- DBI::dbExistsTable(con, DBI::Id(schema = "public", table = "f_hitting_trials"))
+          if (!trials_table_exists) {
+            log_progress("  Creating f_hitting_trials table...")
+            DBI::dbExecute(con, "
+              CREATE TABLE IF NOT EXISTS public.f_hitting_trials (
+                id SERIAL PRIMARY KEY,
+                athlete_uuid VARCHAR(36) NOT NULL,
+                session_date DATE NOT NULL,
+                source_system VARCHAR(50) NOT NULL DEFAULT 'hitting',
+                source_athlete_id VARCHAR(100),
+                owner_filename TEXT,
+                trial_index INTEGER NOT NULL,
+                age_at_collection NUMERIC,
+                age_group TEXT,
+                height NUMERIC,
+                weight NUMERIC,
+                metrics JSONB NOT NULL,
+                session_xml_path TEXT,
+                session_data_xml_path TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT f_hitting_trials_athlete_uuid_fkey
+                  FOREIGN KEY (athlete_uuid) REFERENCES analytics.d_athletes(athlete_uuid) ON DELETE CASCADE
+              )
+            ")
+            DBI::dbExecute(con, "
+              CREATE UNIQUE INDEX IF NOT EXISTS idx_f_hitting_trials_unique
+                ON public.f_hitting_trials(athlete_uuid, session_date, trial_index)
+            ")
+            DBI::dbExecute(con, "
+              CREATE INDEX IF NOT EXISTS idx_f_hitting_trials_owner ON public.f_hitting_trials(owner_filename)
+            ")
+            DBI::dbExecute(con, "
+              CREATE INDEX IF NOT EXISTS idx_f_hitting_trials_date ON public.f_hitting_trials(session_date)
+            ")
+            log_progress("  [SUCCESS] Created f_hitting_trials table")
+          } else {
+            trials_cols <- DBI::dbGetQuery(con, "
+              SELECT column_name FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'f_hitting_trials'
+            ")$column_name
+            if (!"age_at_collection" %in% trials_cols) {
+              DBI::dbExecute(con, "ALTER TABLE public.f_hitting_trials ADD COLUMN age_at_collection NUMERIC")
+              log_progress("  Added age_at_collection to f_hitting_trials")
+            }
+            if (!"age_group" %in% trials_cols) {
+              DBI::dbExecute(con, "ALTER TABLE public.f_hitting_trials ADD COLUMN age_group TEXT")
+              log_progress("  Added age_group to f_hitting_trials")
+            }
+            if (!"height" %in% trials_cols) {
+              DBI::dbExecute(con, "ALTER TABLE public.f_hitting_trials ADD COLUMN height NUMERIC")
+              log_progress("  Added height to f_hitting_trials")
+            }
+            if (!"weight" %in% trials_cols) {
+              DBI::dbExecute(con, "ALTER TABLE public.f_hitting_trials ADD COLUMN weight NUMERIC")
+              log_progress("  Added weight to f_hitting_trials")
+            }
+          }
+          # Insert/upsert trials
+          trials_df$source_system <- "hitting"
+          for (r in seq_len(nrow(trials_df))) {
+            row <- trials_df[r, ]
+            DBI::dbExecute(con, "
+              INSERT INTO public.f_hitting_trials
+                (athlete_uuid, session_date, source_system, source_athlete_id, owner_filename, trial_index,
+                 age_at_collection, age_group, height, weight, metrics, session_xml_path, session_data_xml_path)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
+              ON CONFLICT (athlete_uuid, session_date, trial_index) DO UPDATE SET
+                owner_filename = EXCLUDED.owner_filename,
+                source_athlete_id = COALESCE(EXCLUDED.source_athlete_id, f_hitting_trials.source_athlete_id),
+                age_at_collection = EXCLUDED.age_at_collection,
+                age_group = EXCLUDED.age_group,
+                height = COALESCE(EXCLUDED.height, f_hitting_trials.height),
+                weight = COALESCE(EXCLUDED.weight, f_hitting_trials.weight),
+                metrics = EXCLUDED.metrics,
+                session_xml_path = EXCLUDED.session_xml_path,
+                session_data_xml_path = EXCLUDED.session_data_xml_path,
+                created_at = NOW()
+            ", params = list(
+              row$athlete_uuid, row$session_date, row$source_system, row$source_athlete_id,
+              row$owner_filename, row$trial_index,
+              row$age_at_collection, row$age_group, row$height, row$weight, row$metrics_json,
+              row$session_xml_path, row$session_data_xml_path
+            ))
+          }
+          log_progress("  [SUCCESS] Wrote", nrow(trials_df), "rows to f_hitting_trials")
+        }
+      } else {
+        if (!requireNamespace("jsonlite", quietly = TRUE)) {
+          warning("jsonlite not installed - f_hitting_trials will not be written. Install with: install.packages('jsonlite')")
+        }
+      }
+      
       # Prepare data for warehouse - pivot to long format
       log_progress("  Transforming data for warehouse format...")
       cat("  [PROGRESS] Pivoting to long format (this may take a while with", nrow(metric_df), "rows)...\n")
@@ -1698,10 +1896,12 @@ process_all_files <- function(data_root = NULL) {
             print(duplicate_check)
           }
           
-          # Also verify with a sample query
-          sample_data <- DBI::dbGetQuery(con, "SELECT * FROM f_kinematics_hitting LIMIT 5")
+          # Verify with a sample of the most recently inserted rows (not the first 5 in the table)
+          sample_data <- DBI::dbGetQuery(con, "
+            SELECT * FROM f_kinematics_hitting ORDER BY id DESC LIMIT 5
+          ")
           if (nrow(sample_data) > 0) {
-            log_progress("  Sample data from table:")
+            log_progress("  Most recently inserted rows (from this run):")
             print(sample_data)
           } else {
             log_progress("  [WARNING] Table exists but query returned 0 rows!")
@@ -1804,6 +2004,171 @@ process_all_files <- function(data_root = NULL) {
     }, error = function(e) {
         log_progress("  [WARNING] Could not create all indexes:", conditionMessage(e))
     })
+    }
+    
+    # ---------- Process JSON files into f_hitting_trials ----------
+    if (length(json_files) > 0 && requireNamespace("jsonlite", quietly = TRUE)) {
+      log_progress("  Processing JSON files for f_hitting_trials...")
+      if (!exists("uuid_to_age_df") || is.null(uuid_to_age_df) || nrow(uuid_to_age_df) == 0) {
+        uuid_to_age_df <- tibble(uid = character(), age_at_collection = numeric(), height = numeric(), weight = numeric())
+        for (athlete_info in athlete_list) {
+          if (nrow(athlete_info) > 0 && "uid" %in% names(athlete_info)) {
+            age_at_collection <- if (!is.na(athlete_info$age_at_collection[1])) as.numeric(athlete_info$age_at_collection[1]) else NA_real_
+            height <- if ("height" %in% names(athlete_info)) as.numeric(athlete_info$height[1]) else NA_real_
+            weight <- if ("weight" %in% names(athlete_info)) as.numeric(athlete_info$weight[1]) else NA_real_
+            uuid_to_age_df <- bind_rows(uuid_to_age_df, tibble(
+              uid = athlete_info$uid[1],
+              age_at_collection = age_at_collection,
+              height = height,
+              weight = weight
+            ))
+          }
+        }
+      }
+      path_to_date_map_json <- list()
+      for (athlete_info in athlete_list) {
+        if (nrow(athlete_info) > 0) {
+          athlete_dir <- dirname(athlete_info$source_path[1])
+          athlete_dir_normalized <- normalizePath(athlete_dir, winslash = "/", mustWork = FALSE)
+          if (!is.na(athlete_info$creation_date[1]) && athlete_info$creation_date[1] != "") {
+            creation_date <- tryCatch({
+              as.Date(athlete_info$creation_date[1], format = "%m/%d/%Y")
+            }, error = function(e) NULL)
+            if (!is.na(creation_date)) {
+              path_to_date_map_json[[athlete_dir_normalized]] <- creation_date
+            }
+          }
+        }
+      }
+      json_rows <- list()
+      for (jpath in json_files) {
+        dir_path <- normalizePath(dirname(jpath), winslash = "/", mustWork = FALSE)
+        session_date <- path_to_date_map_json[[dir_path]]
+        if (is.null(session_date)) {
+          parent_dir <- dirname(dir_path)
+          session_date <- path_to_date_map_json[[parent_dir]]
+        }
+        if (is.null(session_date)) session_date <- Sys.Date()
+        matched_uid <- owner_mapping[[dir_path]]
+        if (is.na(matched_uid)) {
+          for (athlete_info in athlete_list) {
+            if (nrow(athlete_info) > 0) {
+              athlete_dir <- normalizePath(dirname(athlete_info$source_path[1]), winslash = "/", mustWork = FALSE)
+              if (identical(dir_path, athlete_dir) || identical(dirname(dir_path), athlete_dir)) {
+                matched_uid <- athlete_info$uid[1]
+                break
+              }
+            }
+          }
+        }
+        if (is.na(matched_uid)) next
+        json_content <- tryCatch(readr::read_file(jpath), error = function(e) NULL)
+        if (is.null(json_content) || nchar(trimws(json_content)) == 0) next
+        age_row <- uuid_to_age_df %>% filter(.data$uid == !!matched_uid)
+        age_at_collection <- if (nrow(age_row) > 0) age_row$age_at_collection[1] else NA_real_
+        age_group <- if (!is.na(age_at_collection)) calculate_age_group_from_age(age_at_collection) else NA_character_
+        height <- if (nrow(age_row) > 0) age_row$height[1] else NA_real_
+        weight <- if (nrow(age_row) > 0) age_row$weight[1] else NA_real_
+        source_athlete_id <- if (matched_uid %in% names(uid_to_athlete_id)) uid_to_athlete_id[[matched_uid]] else NA_character_
+        session_xml_path <- file.path(dir_path, "session.xml")
+        if (!file.exists(session_xml_path)) session_xml_path <- file.path(dirname(dir_path), "session.xml")
+        if (!file.exists(session_xml_path)) session_xml_path <- NA_character_
+        json_rows[[length(json_rows) + 1]] <- tibble(
+          athlete_uuid = matched_uid,
+          session_date = session_date,
+          source_athlete_id = source_athlete_id,
+          owner_filename = basename(jpath),
+          age_at_collection = age_at_collection,
+          age_group = age_group,
+          height = height,
+          weight = weight,
+          metrics_json = json_content,
+          session_xml_path = session_xml_path,
+          session_data_xml_path = NA_character_,
+          json_path = jpath
+        )
+      }
+      if (length(json_rows) > 0) {
+        json_df <- bind_rows(json_rows)
+        trials_table_exists <- DBI::dbExistsTable(con, DBI::Id(schema = "public", table = "f_hitting_trials"))
+        if (!trials_table_exists) {
+          log_progress("  Creating f_hitting_trials table (for JSON)...")
+          DBI::dbExecute(con, "
+            CREATE TABLE IF NOT EXISTS public.f_hitting_trials (
+              id SERIAL PRIMARY KEY,
+              athlete_uuid VARCHAR(36) NOT NULL,
+              session_date DATE NOT NULL,
+              source_system VARCHAR(50) NOT NULL DEFAULT 'hitting',
+              source_athlete_id VARCHAR(100),
+              owner_filename TEXT,
+              trial_index INTEGER NOT NULL,
+              age_at_collection NUMERIC,
+              age_group TEXT,
+              height NUMERIC,
+              weight NUMERIC,
+              metrics JSONB NOT NULL,
+              session_xml_path TEXT,
+              session_data_xml_path TEXT,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              CONSTRAINT f_hitting_trials_athlete_uuid_fkey
+                FOREIGN KEY (athlete_uuid) REFERENCES analytics.d_athletes(athlete_uuid) ON DELETE CASCADE
+            )
+          ")
+          DBI::dbExecute(con, "
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_f_hitting_trials_unique
+              ON public.f_hitting_trials(athlete_uuid, session_date, trial_index)
+          ")
+          DBI::dbExecute(con, "
+            CREATE INDEX IF NOT EXISTS idx_f_hitting_trials_owner ON public.f_hitting_trials(owner_filename)
+          ")
+          DBI::dbExecute(con, "
+            CREATE INDEX IF NOT EXISTS idx_f_hitting_trials_date ON public.f_hitting_trials(session_date)
+          ")
+        }
+        max_trial <- DBI::dbGetQuery(con, "
+          SELECT athlete_uuid, session_date, COALESCE(MAX(trial_index), -1) AS max_idx
+          FROM public.f_hitting_trials
+          GROUP BY athlete_uuid, session_date
+        ")
+        json_df$source_system <- "hitting"
+        json_df$trial_index <- NA_integer_
+        for (i in seq_len(nrow(json_df))) {
+          r <- json_df[i, ]
+          existing <- max_trial %>% filter(.data$athlete_uuid == r$athlete_uuid & as.character(.data$session_date) == as.character(r$session_date))
+          start_idx <- if (nrow(existing) > 0) as.integer(existing$max_idx[1]) + 1L else 0L
+          idx_in_session <- sum(
+            json_df$athlete_uuid[1:i] == r$athlete_uuid &
+            as.character(json_df$session_date[1:i]) == as.character(r$session_date)
+          )
+          json_df$trial_index[i] <- start_idx + idx_in_session - 1L
+        }
+        for (i in seq_len(nrow(json_df))) {
+          r <- json_df[i, ]
+          DBI::dbExecute(con, "
+            INSERT INTO public.f_hitting_trials
+              (athlete_uuid, session_date, source_system, source_athlete_id, owner_filename, trial_index,
+               age_at_collection, age_group, height, weight, metrics, session_xml_path, session_data_xml_path)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
+            ON CONFLICT (athlete_uuid, session_date, trial_index) DO UPDATE SET
+              owner_filename = EXCLUDED.owner_filename,
+              source_athlete_id = COALESCE(EXCLUDED.source_athlete_id, f_hitting_trials.source_athlete_id),
+              age_at_collection = EXCLUDED.age_at_collection,
+              age_group = EXCLUDED.age_group,
+              height = COALESCE(EXCLUDED.height, f_hitting_trials.height),
+              weight = COALESCE(EXCLUDED.weight, f_hitting_trials.weight),
+              metrics = EXCLUDED.metrics,
+              session_xml_path = EXCLUDED.session_xml_path,
+              session_data_xml_path = EXCLUDED.session_data_xml_path,
+              created_at = NOW()
+          ", params = list(
+            r$athlete_uuid, r$session_date, r$source_system, r$source_athlete_id,
+            r$owner_filename, r$trial_index,
+            r$age_at_collection, r$age_group, r$height, r$weight, r$metrics_json,
+            r$session_xml_path, r$session_data_xml_path
+          ))
+        }
+        log_progress("  [SUCCESS] Wrote", nrow(json_df), "JSON trial row(s) to f_hitting_trials")
+      }
     }
   } else {
     if (!use_warehouse) {
