@@ -115,24 +115,21 @@ DB_FILE <- "pitching_data.db"  # Only used if USE_WAREHOUSE = FALSE
 TRUNCATE_BEFORE_INSERT <- FALSE  # Set to TRUE to clear table before inserting (prevents duplicates on re-run)
 
 # ---------- Age group calculation ----------
-#' Calculate age group from age_at_collection
+#' Calculate age group from age_at_collection (vectorized)
 #' Matches Python age_utils.calculate_age_group() logic
-#' @param age_at_collection Age at time of data collection (numeric)
-#' @return Age group string: "YOUTH", "HIGH SCHOOL", "COLLEGE", "PRO", or NA
+#' @param age_at_collection Age(s) at time of data collection (numeric vector)
+#' @return Age group string(s): "YOUTH", "HIGH SCHOOL", "COLLEGE", "PRO", or NA
 calculate_age_group_from_age <- function(age_at_collection) {
-  if (is.na(age_at_collection)) {
-    return(NA_character_)
-  }
-  
-  if (age_at_collection < 13) {
-    return("YOUTH")
-  } else if (age_at_collection >= 14 && age_at_collection <= 18) {
-    return("HIGH SCHOOL")
-  } else if (age_at_collection > 18 && age_at_collection <= 22) {
-    return("COLLEGE")
-  } else {  # age_at_collection > 22
-    return("PRO")
-  }
+  out <- rep(NA_character_, length(age_at_collection))
+  not_na <- !is.na(age_at_collection)
+  a <- age_at_collection[not_na]
+  out[not_na] <- dplyr::case_when(
+    a < 13 ~ "YOUTH",
+    a >= 14 & a <= 18 ~ "HIGH SCHOOL",
+    a > 18 & a <= 22 ~ "COLLEGE",
+    TRUE ~ "PRO"
+  )
+  out
 }
 
 # ---------- Name normalization and UUID matching ----------
@@ -1274,6 +1271,8 @@ process_all_files <- function(data_root = NULL) {
       for (owner_name in owner_names) {
         total_owners_processed <- total_owners_processed + 1
         matched_uid <- NA_character_
+        best_match <- NULL
+        best_match_score <- 0
         
         # PRIORITY: Match by finding session.xml in the same directory as session_data.xml
         # This is the most reliable method since each session_data.xml is in a specific athlete's directory
@@ -1309,6 +1308,7 @@ process_all_files <- function(data_root = NULL) {
             
             if (!is.null(found_athlete) && nrow(found_athlete) > 0 && "uid" %in% names(found_athlete) && !is.na(found_athlete$uid[1])) {
               matched_uid <- found_athlete$uid[1]
+              best_match <- found_athlete
               # Cache this mapping for future owners in same directory
               owner_mapping[[dir_path_normalized]] <- matched_uid
               if (i <= 3) {
@@ -1346,6 +1346,7 @@ process_all_files <- function(data_root = NULL) {
               
               if (!is.null(found_athlete) && nrow(found_athlete) > 0 && "uid" %in% names(found_athlete) && !is.na(found_athlete$uid[1])) {
                 matched_uid <- found_athlete$uid[1]
+                best_match <- found_athlete
                 owner_mapping[[dir_path_normalized]] <- matched_uid
                 if (i <= 3) {
                   cat("    [MATCH-SESSION] Owner", owner_name, "matched via session.xml in parent directory\n")
@@ -1547,7 +1548,7 @@ process_all_files <- function(data_root = NULL) {
           }
           
           # Calculate score for this pitch (extract directly from XML)
-          weight_kg <- if ("weight" %in% names(best_match) && !is.na(best_match$weight[1])) as.numeric(best_match$weight[1]) else NA_real_
+          weight_kg <- if (!is.null(best_match) && "weight" %in% names(best_match) && !is.na(best_match$weight[1])) as.numeric(best_match$weight[1]) else NA_real_
           pitch_score <- calculate_pitching_score(doc, owner_name, velocity_mph, weight_kg)
           metric_data$score <- pitch_score
           
@@ -1769,6 +1770,8 @@ process_all_files <- function(data_root = NULL) {
             metrics_list[[key]] <- as.numeric(df[r, value_cols])
           }
           metrics_json <- jsonlite::toJSON(metrics_list, auto_unbox = TRUE, digits = 8)
+          # Coerce to plain character so bind_rows() doesn't fail on mixed "json" class
+          metrics_json <- as.character(metrics_json)
           session_xml_path <- file.path(dirname(df$source_path[1]), "session.xml")
           trial_rows[[length(trial_rows) + 1]] <- tibble(
             idx = idx,

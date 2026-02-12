@@ -2040,9 +2040,14 @@ def generate_pdf_report(athlete_uuid, athlete_name, session_date, output_dir, lo
         
         # Move from temp location to final location if needed
         if use_temp:
-            if os.path.exists(output_pdf):
-                os.remove(output_pdf)  # Remove old file if exists
-            shutil.move(temp_pdf, output_pdf)
+            if os.path.exists(temp_pdf):
+                if os.path.exists(output_pdf):
+                    os.remove(output_pdf)  # Remove old file if exists
+                shutil.move(temp_pdf, output_pdf)
+            else:
+                # No pages were added (e.g. no data for this athlete/session), so temp file was never created
+                print("No report content generated - skipping PDF save.")
+                return None
         
         return output_pdf
         

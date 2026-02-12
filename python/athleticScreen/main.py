@@ -35,6 +35,90 @@ MOVEMENT_TO_PG_TABLE = {
 }
 
 
+def get_athletes_with_athletic_screen_data(conn, athlete_name_filter=None):
+    """
+    Return list of (athlete_uuid, name, session_date) for athletes that have
+    any athletic screen fact data, using their most recent session date.
+    Optionally filter by athlete name (ILIKE).
+    """
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH sessions AS (
+                SELECT athlete_uuid, session_date FROM public.f_athletic_screen_cmj
+                UNION ALL
+                SELECT athlete_uuid, session_date FROM public.f_athletic_screen_dj
+                UNION ALL
+                SELECT athlete_uuid, session_date FROM public.f_athletic_screen_ppu
+                UNION ALL
+                SELECT athlete_uuid, session_date FROM public.f_athletic_screen_slv
+            ),
+            latest AS (
+                SELECT athlete_uuid, MAX(session_date) AS session_date
+                FROM sessions
+                GROUP BY athlete_uuid
+            )
+            SELECT a.athlete_uuid, a.name, l.session_date::text
+            FROM analytics.d_athletes a
+            JOIN latest l ON l.athlete_uuid = a.athlete_uuid
+            ORDER BY l.session_date DESC
+        """)
+        rows = cur.fetchall()
+    def _date_str(d):
+        if d is None:
+            return None
+        if hasattr(d, 'strftime'):
+            return d.strftime('%Y-%m-%d')
+        return str(d)[:10]
+    out = [(r[0], r[1], _date_str(r[2])) for r in rows if r[2]]
+    if athlete_name_filter:
+        needle = athlete_name_filter.strip().lower()
+        out = [(u, n, d) for u, n, d in out if n and needle in n.lower()]
+    return out
+
+
+def run_report_generation(athletes_to_report, folder_path):
+    """
+    Generate PDF reports for the given athletes.
+    athletes_to_report: dict mapping athlete_uuid -> (name, date_str)
+    folder_path: base directory for Power files (e.g. Output Files).
+    """
+    from athleticScreen.pdf_report import generate_pdf_report
+    reports_dir_1 = os.getenv('ATHLETIC_SCREEN_REPORTS_GOOGLE_DRIVE', r'G:\My Drive\Athletic Screen 2.0 Reports\Reports 2.0')
+    reports_dir_2 = os.getenv('ATHLETIC_SCREEN_REPORTS_DIR', r'D:\Athletic Screen 2.0\Reports')
+    os.makedirs(reports_dir_1, exist_ok=True)
+    os.makedirs(reports_dir_2, exist_ok=True)
+    logo_path = Path(__file__).parent / "8ctnae - Faded 8 to Blue.png"
+    if not logo_path.exists():
+        logo_path = None
+    for athlete_uuid, (name, date_str) in athletes_to_report.items():
+        try:
+            print(f"   Generating PDF report for {name} ({date_str})...")
+            report_path = generate_pdf_report(
+                athlete_uuid=athlete_uuid,
+                athlete_name=name,
+                session_date=date_str,
+                output_dir=reports_dir_1,
+                logo_path=logo_path,
+                power_files_dir=folder_path,
+            )
+            if report_path:
+                print(f"   ✓ PDF report generated: {report_path}")
+                try:
+                    clean_name = name.replace(' ', '_').replace(',', '')
+                    report_filename = f"{clean_name}_{date_str}_report.pdf"
+                    report_path_2 = os.path.join(reports_dir_2, report_filename)
+                    shutil.copy2(report_path, report_path_2)
+                    print(f"   ✓ PDF report copied to: {report_path_2}")
+                except Exception as copy_error:
+                    print(f"   Warning: Could not copy report to second location: {copy_error}")
+            else:
+                print(f"   ✗ Failed to generate PDF report for {name}")
+        except Exception as e:
+            print(f"   Warning: Could not generate PDF report for {name}: {e}")
+            import traceback
+            traceback.print_exc()
+
+
 def _safe_convert_to_python_type(val):
     """ 
     Safely convert any value to Python native type for PostgreSQL.
@@ -598,76 +682,34 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
         print(f"Warning: Could not update athlete flags: {str(e)}")
     
     # Check for duplicate athletes and prompt to merge
+    merge_map = {}
     if processed:
         print("\nChecking for similar athlete names...")
         try:
             pg_conn = get_warehouse_connection()
             processed_uuids = [uuid for _, uuid, _ in processed]
-            check_and_merge_duplicates(conn=pg_conn, athlete_uuids=processed_uuids, min_similarity=0.80)
+            result = check_and_merge_duplicates(conn=pg_conn, athlete_uuids=processed_uuids, min_similarity=0.80)
+            merge_map = result.get('merge_map', {})
             pg_conn.close()
         except Exception as e:
             print(f"Warning: Could not check for duplicates: {str(e)}")
             import traceback
             traceback.print_exc()
     
-    # Generate reports for all processed athletes
+    # Generate reports for all processed athletes (use canonical UUID after merge so data is found)
     if processed:
         print("\nGenerating reports...")
         try:
-            from athleticScreen.pdf_report import generate_pdf_report
-            
-            # Set output directories for reports (save to both locations)
-            reports_dir_1 = os.getenv('ATHLETIC_SCREEN_REPORTS_GOOGLE_DRIVE', r'G:\My Drive\Athletic Screen 2.0 Reports\Reports 2.0')
-            reports_dir_2 = os.getenv('ATHLETIC_SCREEN_REPORTS_DIR', r'D:\Athletic Screen 2.0\Reports')
-            
-            os.makedirs(reports_dir_1, exist_ok=True)
-            os.makedirs(reports_dir_2, exist_ok=True)
-            
-            # Get logo path
-            logo_path = Path(__file__).parent / "8ctnae - Faded 8 to Blue.png"
-            if not logo_path.exists():
-                logo_path = None
-            
-            # Generate one report per athlete (using their most recent session date)
             athletes_to_report = {}
             for name, athlete_uuid, date_str in processed:
-                if athlete_uuid not in athletes_to_report:
-                    athletes_to_report[athlete_uuid] = (name, date_str)
+                report_uuid = merge_map.get(athlete_uuid, athlete_uuid)
+                if report_uuid not in athletes_to_report:
+                    athletes_to_report[report_uuid] = (name, date_str)
                 else:
-                    # Use the most recent date
-                    existing_date = athletes_to_report[athlete_uuid][1]
+                    existing_date = athletes_to_report[report_uuid][1]
                     if date_str > existing_date:
-                        athletes_to_report[athlete_uuid] = (name, date_str)
-            
-            for athlete_uuid, (name, date_str) in athletes_to_report.items():
-                try:
-                    print(f"   Generating PDF report for {name} ({date_str})...")
-                    # Generate report to first location
-                    report_path = generate_pdf_report(
-                        athlete_uuid=athlete_uuid,
-                        athlete_name=name,
-                        session_date=date_str,
-                        output_dir=reports_dir_1,
-                        logo_path=logo_path,
-                        power_files_dir=folder_path  # Pass the base directory for Power.txt files
-                    )
-                    if report_path:
-                        print(f"   ✓ PDF report generated: {report_path}")
-                        # Copy to second location
-                        try:
-                            clean_name = name.replace(' ', '_').replace(',', '')
-                            report_filename = f"{clean_name}_{date_str}_report.pdf"
-                            report_path_2 = os.path.join(reports_dir_2, report_filename)
-                            shutil.copy2(report_path, report_path_2)
-                            print(f"   ✓ PDF report copied to: {report_path_2}")
-                        except Exception as copy_error:
-                            print(f"   Warning: Could not copy report to second location: {copy_error}")
-                    else:
-                        print(f"   ✗ Failed to generate PDF report for {name}")
-                except Exception as e:
-                    print(f"   Warning: Could not generate PDF report for {name}: {e}")
-                    import traceback
-                    traceback.print_exc()
+                        athletes_to_report[report_uuid] = (name, date_str)
+            run_report_generation(athletes_to_report, folder_path)
         except Exception as e:
             print(f"Warning: Report generation failed: {e}")
             import traceback
@@ -698,6 +740,8 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Athletic Screen data processing to PostgreSQL")
     parser.add_argument("--dry-run", action="store_true", help="Parse and print what would be done; no DB writes, no file moves")
+    parser.add_argument("--report-only", action="store_true", help="Skip data processing; generate PDF reports from existing DB data only")
+    parser.add_argument("--athlete", type=str, default=None, metavar="NAME", help="With --report-only: only generate report for this athlete (name substring match)")
     args = parser.parse_args()
 
     # Get paths from config (or use defaults)
@@ -712,6 +756,37 @@ def main():
         folder_path = os.getenv('ATHLETIC_SCREEN_DATA_DIR', r'D:/Athletic Screen 2.0/Output Files/')
 
     folder_path = os.path.abspath(folder_path)
+
+    if args.report_only:
+        print("=" * 60)
+        print("Athletic Screen – report only (no data processing)")
+        print("=" * 60)
+        try:
+            pg_conn = get_warehouse_connection()
+            athletes = get_athletes_with_athletic_screen_data(pg_conn, athlete_name_filter=args.athlete)
+            pg_conn.close()
+        except Exception as e:
+            print(f"Failed to load athletes from DB: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+        if not athletes:
+            print("No athletes with Athletic Screen data found." + (" Try a different --athlete name." if args.athlete else ""))
+            return
+        athletes_to_report = {}
+        for athlete_uuid, name, date_str in athletes:
+            if athlete_uuid not in athletes_to_report:
+                athletes_to_report[athlete_uuid] = (name, date_str)
+            else:
+                existing_date = athletes_to_report[athlete_uuid][1]
+                if date_str > existing_date:
+                    athletes_to_report[athlete_uuid] = (name, date_str)
+        print(f"\nGenerating reports for {len(athletes_to_report)} athlete(s)...")
+        run_report_generation(athletes_to_report, folder_path)
+        print("\n" + "=" * 60)
+        print("Report generation complete!")
+        print("=" * 60)
+        return
 
     # Processing options
     BATCH_PROCESS = True  # Process all files in directory

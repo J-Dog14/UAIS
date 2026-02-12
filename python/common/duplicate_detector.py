@@ -513,7 +513,8 @@ def check_and_merge_duplicates(
             return {
                 'matches_found': 0,
                 'merged': 0,
-                'skipped': 0
+                'skipped': 0,
+                'merge_map': {}
             }
         
         logger.info(f"Checking {len(athlete_uuids)} newly processed athlete(s) for similar names...")
@@ -526,7 +527,8 @@ def check_and_merge_duplicates(
             return {
                 'matches_found': 0,
                 'merged': 0,
-                'skipped': 0
+                'skipped': 0,
+                'merge_map': {}
             }
         
         if auto_skip:
@@ -534,12 +536,15 @@ def check_and_merge_duplicates(
             return {
                 'matches_found': len(similar_pairs),
                 'merged': 0,
-                'skipped': len(similar_pairs)
+                'skipped': len(similar_pairs),
+                'merge_map': {}
             }
         
         # Interactive merging
         merged_count = 0
         skipped_count = 0
+        # Map duplicate_uuid -> canonical_uuid so callers can use canonical UUID for reports etc.
+        merge_map = {}
         
         for athlete1, athlete2, similarity in similar_pairs:
             result = interactive_merge_prompt(athlete1, athlete2, similarity, conn)
@@ -550,6 +555,7 @@ def check_and_merge_duplicates(
                 break
             elif result and result.get('merged'):
                 merged_count += 1
+                merge_map[result['duplicate_uuid']] = result['canonical_uuid']
             else:
                 skipped_count += 1
         
@@ -565,7 +571,8 @@ def check_and_merge_duplicates(
         return {
             'matches_found': len(similar_pairs),
             'merged': merged_count,
-            'skipped': skipped_count
+            'skipped': skipped_count,
+            'merge_map': merge_map
         }
         
     except KeyboardInterrupt:
@@ -574,7 +581,8 @@ def check_and_merge_duplicates(
             'matches_found': 0,
             'merged': 0,
             'skipped': 0,
-            'interrupted': True
+            'interrupted': True,
+            'merge_map': {}
         }
     except Exception as e:
         logger.exception(f"Error checking for duplicates: {e}")
@@ -582,7 +590,8 @@ def check_and_merge_duplicates(
             'matches_found': 0,
             'merged': 0,
             'skipped': 0,
-            'error': str(e)
+            'error': str(e),
+            'merge_map': {}
         }
     finally:
         if close_conn:
