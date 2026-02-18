@@ -12,7 +12,7 @@ This module provides functions to:
 Usage:
     from python.common.athlete_manager import get_or_create_athlete
     
-    athlete_uuid = get_or_create_athlete(
+    athlete_uuid, created = get_or_create_athlete(
         name="Weiss, Ryan 11-25",
         date_of_birth="1996-12-10",
         source_system="pitching",
@@ -33,6 +33,11 @@ from datetime import datetime, date
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import yaml
+from difflib import SequenceMatcher
+
+# Single source of truth for name similarity threshold (90% match across pipelines).
+# Used by get_or_create_athlete and duplicate_detector so all pipelines resolve the same athlete.
+NAME_SIMILARITY_THRESHOLD = 0.9
 
 # Configure logging to stderr by default (so stdout can be used for data output)
 # This can be overridden by callers if needed
@@ -95,6 +100,16 @@ def normalize_name_for_display(name: str) -> str:
     name = ' '.join(name.split())
     
     return name
+
+
+def normalize_email(email: Optional[str]) -> Optional[str]:
+    """
+    Normalize email for storage and matching: lowercase, strip.
+    Returns None if input is empty/None.
+    """
+    if not email or not str(email).strip():
+        return None
+    return str(email).strip().lower()
 
 
 def normalize_name_for_matching(name: str) -> str:
@@ -363,6 +378,119 @@ def check_app_db_for_uuid(normalized_name: str) -> Optional[str]:
         return None
 
 
+def get_athlete_from_warehouse_by_email(normalized_email: str, conn=None) -> Optional[Dict[str, Any]]:
+    """
+    Get athlete from warehouse by normalized email.
+
+    Args:
+        normalized_email: Lowercase, trimmed email
+        conn: Optional database connection
+
+    Returns:
+        Dictionary with athlete data if found, None otherwise
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_warehouse_connection()
+        close_conn = True
+
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('''
+                SELECT * FROM analytics.d_athletes
+                WHERE LOWER(TRIM(email)) = %s
+                ORDER BY app_db_uuid NULLS LAST, created_at ASC
+                LIMIT 1
+            ''', (normalized_email,))
+            result = cur.fetchone()
+            return dict(result) if result else None
+    finally:
+        if close_conn:
+            conn.close()
+
+
+def _merge_athlete_into_canonical(source_uuid: str, target_uuid: str, conn) -> bool:
+    """
+    Move all fact data and source_athlete_map from source_uuid to target_uuid,
+    then delete the source athlete row. Used when merging duplicate athletes (e.g. by email).
+    """
+    fact_tables = [
+        'f_athletic_screen', 'f_athletic_screen_cmj', 'f_athletic_screen_dj',
+        'f_athletic_screen_nmt', 'f_athletic_screen_ppu', 'f_athletic_screen_slv',
+        'f_pro_sup', 'f_readiness_screen', 'f_readiness_screen_i', 'f_readiness_screen_y',
+        'f_readiness_screen_t', 'f_readiness_screen_ir90', 'f_readiness_screen_cmj', 'f_readiness_screen_ppu',
+        'f_mobility', 'f_proteus', 'f_kinematics_pitching', 'f_kinematics_hitting',
+        'f_pitching_trials', 'f_arm_action', 'f_curveball_test'
+    ]
+    with conn.cursor() as cur:
+        for table in fact_tables:
+            try:
+                cur.execute('''
+                    SELECT COUNT(*) FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s AND column_name = 'athlete_uuid'
+                ''', ('public', table))
+                if cur.fetchone()[0] == 0:
+                    continue
+                cur.execute('UPDATE public.%s SET athlete_uuid = %%s WHERE athlete_uuid = %%s' % table, (target_uuid, source_uuid))
+                if cur.rowcount > 0:
+                    logger.info(f"Merged {cur.rowcount} row(s) from {table} into {target_uuid}")
+            except Exception as e:
+                logger.warning(f"Error merging {table}: {e}")
+        try:
+            cur.execute('UPDATE analytics.source_athlete_map SET athlete_uuid = %s WHERE athlete_uuid = %s', (target_uuid, source_uuid))
+        except Exception as e:
+            logger.warning(f"Error merging source_athlete_map: {e}")
+        cur.execute('DELETE FROM analytics.d_athletes WHERE athlete_uuid = %s', (source_uuid,))
+        deleted = cur.rowcount
+    conn.commit()
+    return deleted > 0
+
+
+def merge_by_email(normalized_email: str, conn=None) -> Optional[str]:
+    """
+    Merge all athletes with the same normalized email into one canonical row.
+    Picks the earliest-created athlete as canonical and moves all fact data to that UUID.
+    Idempotent: if zero or one row has this email, no merge is performed;
+    returns the single athlete_uuid if one exists, else None.
+
+    Args:
+        normalized_email: Lowercase, trimmed email.
+        conn: Optional database connection.
+
+    Returns:
+        Canonical athlete_uuid after merge, or None if no athlete has this email.
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_warehouse_connection()
+        close_conn = True
+
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('''
+                SELECT athlete_uuid, name, created_at
+                FROM analytics.d_athletes
+                WHERE LOWER(TRIM(email)) = %s
+                ORDER BY created_at ASC
+            ''', (normalized_email,))
+            rows = cur.fetchall()
+        if not rows:
+            return None
+        if len(rows) == 1:
+            return str(rows[0]['athlete_uuid'])
+        canonical_uuid = str(rows[0]['athlete_uuid'])
+        for r in rows[1:]:
+            other_uuid = str(r['athlete_uuid'])
+            if other_uuid == canonical_uuid:
+                continue
+            logger.info(f"Merge by email: merging {other_uuid} into {canonical_uuid}")
+            _merge_athlete_into_canonical(other_uuid, canonical_uuid, conn)
+        return canonical_uuid
+    finally:
+        if close_conn:
+            conn.close()
+
+
 def get_athlete_from_warehouse(normalized_name: str, date_of_birth: Optional[str] = None, conn=None) -> Optional[Dict[str, Any]]:
     """
     Get athlete from warehouse by normalized name (and optionally DOB for better matching).
@@ -414,6 +542,67 @@ def get_athlete_from_warehouse(normalized_name: str, date_of_birth: Optional[str
             conn.close()
 
 
+def _name_similarity(name1: str, name2: str) -> float:
+    """Similarity ratio 0.0--1.0 (uses same logic as duplicate_detector)."""
+    if not name1 or not name2:
+        return 0.0
+    return SequenceMatcher(None, name1.lower(), name2.lower()).ratio()
+
+
+def find_existing_athlete_by_name_or_email(
+    conn,
+    normalized_name: str,
+    email: Optional[str] = None,
+    date_of_birth: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Find an existing athlete in d_athletes by email (exact), exact normalized name, or 90% name similarity.
+    Single source of truth for athlete resolution so all pipelines (Athletic Screen, Pro Sup, Pitching, etc.)
+    resolve to the same athlete when running multiple assessments without ATHLETE_UUID.
+
+    Order: (1) normalized email match if email provided, (2) exact normalized_name (+ DOB), (3) fuzzy name >= NAME_SIMILARITY_THRESHOLD.
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        # 1. Email match (normalized)
+        if email:
+            norm_email = normalize_email(email)
+            if norm_email:
+                cur.execute(
+                    """
+                    SELECT * FROM analytics.d_athletes
+                    WHERE email = %s
+                    ORDER BY app_db_uuid NULLS LAST, created_at ASC
+                    LIMIT 1
+                    """,
+                    (norm_email,),
+                )
+                row = cur.fetchone()
+                if row:
+                    return dict(row)
+        # 2. Exact name (and DOB) match
+        existing = get_athlete_from_warehouse(normalized_name, date_of_birth, conn)
+        if existing:
+            return existing
+        # 3. Fuzzy name match (90% threshold)
+        cur.execute(
+            """
+            SELECT * FROM analytics.d_athletes
+            WHERE normalized_name IS NOT NULL AND normalized_name != ''
+            """
+        )
+        best_ratio = NAME_SIMILARITY_THRESHOLD - 1e-6
+        best_row = None
+        for row in cur.fetchall():
+            r = row.get("normalized_name") or ""
+            ratio = _name_similarity(normalized_name, r)
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_row = row
+        if best_row is not None:
+            return dict(best_row)
+    return None
+
+
 def create_athlete_in_warehouse(
     name: str,
     normalized_name: str,
@@ -424,7 +613,7 @@ def create_athlete_in_warehouse(
     gender: Optional[str] = None,
     height: Optional[float] = None,
     weight: Optional[float] = None,
-    email: Optional[str] = None,  # Not stored in d_athletes, kept for API compatibility
+    email: Optional[str] = None,
     phone: Optional[str] = None,  # Not stored in d_athletes, kept for API compatibility
     notes: Optional[str] = None,
     source_system: Optional[str] = None,
@@ -501,23 +690,24 @@ def create_athlete_in_warehouse(
         if calculated_age_group is None and source_system in ("arm_action", "curveball_test"):
             calculated_age_group = "YOUTH"
 
+        email_norm = normalize_email(email)
         with conn.cursor() as cur:
             # Use UPSERT to handle duplicate UUIDs gracefully
-            # This prevents "duplicate key value violates unique constraint" errors
             # Note: age_group is updated when DOB changes (recalculate from current age)
             cur.execute('''
                 INSERT INTO analytics.d_athletes (
-                    athlete_uuid, name, normalized_name,
+                    athlete_uuid, name, normalized_name, email,
                     date_of_birth, age, age_at_collection, age_group,
                     gender, height, weight, notes,
                     source_system, source_athlete_id, app_db_uuid, app_db_synced_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
                 )
                 ON CONFLICT (athlete_uuid) 
                 DO UPDATE SET
                     name = COALESCE(EXCLUDED.name, analytics.d_athletes.name),
                     normalized_name = COALESCE(EXCLUDED.normalized_name, analytics.d_athletes.normalized_name),
+                    email = COALESCE(EXCLUDED.email, analytics.d_athletes.email),
                     date_of_birth = COALESCE(EXCLUDED.date_of_birth, analytics.d_athletes.date_of_birth),
                     age = COALESCE(EXCLUDED.age, analytics.d_athletes.age),
                     age_at_collection = COALESCE(EXCLUDED.age_at_collection, analytics.d_athletes.age_at_collection),
@@ -538,7 +728,7 @@ def create_athlete_in_warehouse(
                         ELSE analytics.d_athletes.app_db_synced_at
                     END
             ''', (
-                athlete_uuid, name, normalized_name,
+                athlete_uuid, name, normalized_name, email_norm,
                 date_of_birth, calculated_age, age_at_collection, calculated_age_group,
                 gender, height, weight, notes,
                 source_system, source_athlete_id, app_db_uuid
@@ -592,7 +782,7 @@ def update_athlete_in_warehouse(
     gender: Optional[str] = None,
     height: Optional[float] = None,
     weight: Optional[float] = None,
-    email: Optional[str] = None,  # Not stored in d_athletes, kept for API compatibility
+    email: Optional[str] = None,
     phone: Optional[str] = None,  # Not stored in d_athletes, kept for API compatibility
     notes: Optional[str] = None,
     app_db_uuid: Optional[str] = None,
@@ -600,7 +790,7 @@ def update_athlete_in_warehouse(
 ) -> None:
     """
     Update athlete in warehouse (only updates non-NULL fields, doesn't overwrite existing data).
-    
+
     Args:
         athlete_uuid: UUID of athlete to update
         name: Full name (only updates if current value is NULL)
@@ -610,7 +800,7 @@ def update_athlete_in_warehouse(
         gender: Gender (only updates if current value is NULL)
         height: Height (only updates if current value is NULL)
         weight: Weight (only updates if current value is NULL)
-        email: Email (only updates if current value is NULL)
+        email: Email (only updates if current value is NULL, normalized)
         phone: Phone (only updates if current value is NULL)
         notes: Notes (only updates if current value is NULL)
         app_db_uuid: App DB UUID (always updates if provided)
@@ -684,8 +874,9 @@ def update_athlete_in_warehouse(
             updates.append("weight = COALESCE(weight, %s)")
             params.append(weight)
         
-        # Note: email and phone are not stored in d_athletes table
-        # They are accepted for API compatibility but ignored
+        if email is not None:
+            updates.append("email = COALESCE(email, %s)")
+            params.append(normalize_email(email))
         
         if notes is not None:
             updates.append("notes = COALESCE(notes, %s)")
@@ -758,7 +949,7 @@ def get_or_create_athlete(
         check_app_db: Whether to check app database for UUID
         
     Returns:
-        athlete_uuid (string)
+        Tuple of (athlete_uuid: str, created: bool). created is True when a new athlete was created, False when matched to existing.
     """
     # Clean and normalize name using cleanup module (removes dates, initials, etc.)
     try:
@@ -777,12 +968,20 @@ def get_or_create_athlete(
     conn = get_warehouse_connection()
     
     try:
-        # Check warehouse first (with DOB if provided for better matching)
-        existing = get_athlete_from_warehouse(normalized_name, date_of_birth, conn)
+        # Single source of truth: email first, then exact name, then 90% fuzzy name (Safeguards 1 & 2).
+        existing = find_existing_athlete_by_name_or_email(
+            conn, normalized_name, email=email, date_of_birth=date_of_birth
+        )
         
         if existing:
-            # Athlete exists - update with any new info
-            logger.info(f"Found existing athlete: {existing['name']} ({existing['athlete_uuid']})")
+            # Athlete exists - update with any new info (do not create duplicate)
+            if (existing.get("normalized_name") or "").strip() != (normalized_name or "").strip():
+                logger.info(
+                    "Matched to existing athlete (name/email) instead of creating new: "
+                    f"{existing['name']} ({existing['athlete_uuid']})"
+                )
+            else:
+                logger.info(f"Found existing athlete: {existing['name']} ({existing['athlete_uuid']})")
             
             # Check verceldb if not already synced (master source of truth)
             verceldb_uuid = None
@@ -820,7 +1019,7 @@ def get_or_create_athlete(
                 except Exception as e:
                     logger.warning(f"Failed to add source mapping: {e}")
             
-            return existing['athlete_uuid']
+            return (existing['athlete_uuid'], False)
         
         # Athlete doesn't exist - create new
         logger.info(f"Creating new athlete: {name}")
@@ -864,7 +1063,7 @@ def get_or_create_athlete(
             except Exception as e:
                 logger.warning(f"Failed to add source mapping: {e}")
         
-        return athlete_uuid
+        return (athlete_uuid, True)
         
     finally:
         conn.close()
@@ -1069,6 +1268,7 @@ def update_uuid_across_tables(old_uuid: str, new_uuid: str, conn=None) -> bool:
                 'f_proteus',
                 'f_kinematics_pitching',
                 'f_kinematics_hitting',
+                'f_pitching_trials',
                 'f_arm_action',
                 'f_curveball_test'
             ]
@@ -1263,7 +1463,7 @@ if __name__ == '__main__':
             logger.info("\nRun without --dry-run to apply changes")
     else:
         # Default: Test the module with one athlete
-        test_uuid = get_or_create_athlete(
+        test_uuid, created = get_or_create_athlete(
             name="Weiss, Ryan 11-25",
             date_of_birth="1996-12-10",
             age=28,

@@ -22,6 +22,16 @@ _BIRTH_DATE_FIELD_NAMES = (
     "date_of_birth",
 )
 
+# Field names to look for email in Subject/Fields (exact match, case-sensitive)
+_EMAIL_FIELD_NAMES = (
+    "Email",
+    "email",
+    "E-mail",
+    "e-mail",
+    "EmailAddress",
+    "email_address",
+)
+
 
 def _tag_looks_like_dob(tag_local_name: str) -> bool:
     """True if the Fields child tag looks like a birth/DOB field (flexible match)."""
@@ -142,6 +152,50 @@ def get_dob_from_athletic_screen_data(data_root, athlete_name: str) -> Optional[
             if dob:
                 return dob
     return None
+
+
+def parse_email_from_session_xml(session_xml_path) -> Optional[str]:
+    """
+    Parse session.xml and return email from Subject/Fields if present.
+
+    Looks for Fields children with tag in _EMAIL_FIELD_NAMES.
+    Returns normalized email (lowercase, stripped) or None.
+
+    Args:
+        session_xml_path: Path to session.xml (str or Path).
+
+    Returns:
+        Normalized email string, or None if not found.
+    """
+    path = Path(session_xml_path)
+    if not path.exists():
+        return None
+    try:
+        text = _read_session_xml(path)
+        root = ET.fromstring(text)
+    except Exception:
+        return None
+
+    tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag
+    if tag != "Subject":
+        return None
+
+    raw_value = None
+    for child in root:
+        ctag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if ctag == "Fields":
+            for f in child:
+                ftag = f.tag.split("}")[-1] if "}" in f.tag else f.tag
+                if f.text and ftag in _EMAIL_FIELD_NAMES:
+                    raw_value = f.text.strip()
+                    break
+            if raw_value is not None:
+                break
+
+    if not raw_value:
+        return None
+    # Normalize: lowercase, strip
+    return raw_value.lower().strip()
 
 
 def get_dob_from_session_xml_next_to_file(file_path) -> Optional[str]:

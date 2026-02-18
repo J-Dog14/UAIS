@@ -148,19 +148,32 @@ def get_proteus_date_range_days() -> int:
 def get_date_range(days: Optional[int] = None) -> tuple[date, date]:
     """
     Get date range for CSV download.
-    
+    If PROTEUS_START_DATE and PROTEUS_END_DATE are set (e.g. for backfill), use those.
+    Otherwise use default: yesterday, or N days back from yesterday.
+
     Args:
         days: Number of days to go back (default: from PROTEUS_DATE_RANGE_DAYS env var)
-        
+
     Returns:
-        Tuple of (start_date, end_date) where end_date is yesterday
+        Tuple of (start_date, end_date)
     """
+    start_str = os.getenv("PROTEUS_START_DATE")
+    end_str = os.getenv("PROTEUS_END_DATE")
+    if start_str and end_str:
+        try:
+            start_date = date.fromisoformat(start_str.strip())
+            end_date = date.fromisoformat(end_str.strip())
+            if start_date <= end_date:
+                return start_date, end_date
+        except ValueError:
+            pass
+
     if days is None:
         days = get_proteus_date_range_days()
-    
+
     end_date = date.today() - timedelta(days=1)  # Yesterday
     start_date = end_date - timedelta(days=days - 1)  # Go back N days from yesterday
-    
+
     return start_date, end_date
 
 

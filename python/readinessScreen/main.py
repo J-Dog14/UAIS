@@ -27,6 +27,7 @@ from file_parsers import (
     extract_name, extract_date, read_first_numeric_row_values,
     select_folder_dialog, ASCII_FILES
 )
+from common.session_duplicate_prompt import session_exists, prompt_duplicate_session
 from database_utils import reorder_all_tables
 from dashboard import run_dashboard
 
@@ -161,27 +162,25 @@ def calculate_age_group(session_date, date_of_birth):
         return None
 
 
-def process_txt_files(output_path: str):
+def process_txt_files(output_path: str, athlete_uuid: str = None, profile: dict = None):
     """
     Process all txt files from Output Files directory and insert into PostgreSQL.
     Extracts name and date from first line of each txt file (like Athletic Screen).
-    
+
     Args:
         output_path: Path to directory containing txt files (e.g., 'D:/Readiness Screen 3/Output Files/')
-    
+        athlete_uuid: Optional. When provided (e.g. Existing Athlete from Octane), use this UUID for all
+            inserts and do not create a new athlete.
+        profile: Optional dict of existing profile fields; only missing fields are filled from data.
+
     Returns:
         List of tuples (participant_name, athlete_uuid) for processed files.
     """
-    print("=" * 60)
-    print("Readiness Screen Data Processing to PostgreSQL")
-    print("=" * 60)
-    print(f"\nScanning directory: {output_path}")
+    print("Readiness Screen")
     
     if not os.path.exists(output_path):
         raise ValueError(f"Directory not found: {output_path}")
     
-    # Connect to PostgreSQL
-    print("Connecting to PostgreSQL warehouse...")
     pg_conn = get_warehouse_connection()
     
     # Find all txt files matching our movement types
@@ -196,10 +195,12 @@ def process_txt_files(output_path: str):
         pg_conn.close()
         return []
     
-    print(f"Found {len(txt_files)} txt files to process")
+    print(f"Processing {len(txt_files)} files")
     
     # Process each txt file - extract name and date from first line
     processed_athletes = {}  # Track athletes by (name, date) -> athlete_uuid
+    duplicate_session_prompted = set()
+    duplicate_session_skip = set()
     processed = []
     errors = []
     inserted_count = 0
@@ -207,42 +208,37 @@ def process_txt_files(output_path: str):
     
     for movement_type, file_path in txt_files.items():
         try:
-            print(f"\nProcessing {movement_type}: {os.path.basename(file_path)}")
-            
             # Parse txt file - extracts name and date from first line
             parsed_data = parse_txt_file(file_path, movement_type)
             
             if not parsed_data:
-                print(f"   Skipping {file_path} - failed to parse")
+                print(f"Warning: Skipping {file_path} - failed to parse")
                 continue
             
             name = parsed_data['name']
             date_str = parsed_data['date']
             athlete_key = (name, date_str)
             
-            print(f"   Extracted: {name} ({date_str})")
-            
-            # Get or create athlete in PostgreSQL (with name cleaning and source ID extraction)
-            # Note: Readiness screen txt files don't contain demographic data,
-            # so we only pass name and source info. Demographic data will be filled
-            # from other sources if available.
+            # Get or create athlete (or use provided athlete_uuid when running for Existing Athlete)
             if athlete_key not in processed_athletes:
                 try:
-                    # Extract source_athlete_id (initials if present, otherwise cleaned name)
-                    source_athlete_id = extract_source_athlete_id(name)
-                    
-                    athlete_uuid = get_or_create_athlete(
-                        name=name,  # Will be cleaned by get_or_create_athlete (removes dates, initials, etc.)
-                        source_system="readiness_screen",
-                        source_athlete_id=source_athlete_id
-                    )
-                    processed_athletes[athlete_key] = athlete_uuid
-                    print(f"   Got/created athlete UUID: {athlete_uuid}")
-                    
-                    # Update data flag immediately
-                    update_athlete_data_flag(pg_conn, athlete_uuid, "readiness_screen", has_data=True)
+                    if athlete_uuid:
+                        processed_athletes[athlete_key] = athlete_uuid
+                        print(f"Athlete: {name}")
+                        print("Successful match with athlete in DB")
+                    else:
+                        source_athlete_id = extract_source_athlete_id(name)
+                        athlete_uuid, created = get_or_create_athlete(
+                            name=name,
+                            source_system="readiness_screen",
+                            source_athlete_id=source_athlete_id
+                        )
+                        processed_athletes[athlete_key] = athlete_uuid
+                        print(f"Athlete: {name}")
+                        print("New athlete profile created" if created else "Successful match with athlete in DB")
+                    update_athlete_data_flag(pg_conn, processed_athletes[athlete_key], "readiness_screen", has_data=True)
                 except Exception as e:
-                    print(f"   Error getting athlete UUID: {str(e)}")
+                    print(f"Error: {str(e)}")
                     import traceback
                     traceback.print_exc()
                     errors.append(f"{file_path}: Failed to get athlete UUID - {str(e)}")
@@ -277,7 +273,7 @@ def process_txt_files(output_path: str):
             # Map to PostgreSQL table
             pg_table = MOVEMENT_TO_PG_TABLE.get(movement_type)
             if not pg_table:
-                print(f"   Warning: No PostgreSQL table mapping for {movement_type}")
+                print(f"Warning: No PostgreSQL table mapping for {movement_type}")
                 continue
             
             # Prepare data for insertion
@@ -314,6 +310,19 @@ def process_txt_files(output_path: str):
                     'time_to_max': parsed_data.get('Time_to_Max')
                 }
             
+            # Safeguard 4 (Existing Athlete): prompt before overwriting existing session
+            if athlete_uuid:
+                key = (athlete_uuid, date_str)
+                if key in duplicate_session_skip:
+                    continue
+                if key not in duplicate_session_prompted:
+                    if session_exists(pg_conn, "f_readiness_screen_i", athlete_uuid, date_str):
+                        if not prompt_duplicate_session(date_str):
+                            duplicate_session_skip.add(key)
+                            errors.append(f"{file_path}: User chose not to overwrite existing session {date_str}")
+                            continue
+                        duplicate_session_prompted.add(key)
+            
             # UPSERT: Check if row exists, then update or insert
             with pg_conn.cursor() as cur:
                 # Check if row exists
@@ -343,7 +352,6 @@ def process_txt_files(output_path: str):
                         WHERE athlete_uuid = %s AND session_date = %s
                     """, update_values)
                     updated_count += 1
-                    print(f"   ✓ Updated {movement_type} data")
                 else:
                     # Insert new row
                     cols = list(insert_data.keys())
@@ -356,7 +364,6 @@ def process_txt_files(output_path: str):
                         VALUES ({placeholders})
                     """, values)
                     inserted_count += 1
-                    print(f"   ✓ Inserted {movement_type} data")
                 
                 pg_conn.commit()
             
@@ -366,47 +373,35 @@ def process_txt_files(output_path: str):
         except Exception as e:
             error_msg = f"{file_path}: {str(e)}"
             errors.append(error_msg)
-            print(f"   ✗ Error: {str(e)}")
+            print(f"Error: {str(e)}")
             import traceback
             traceback.print_exc()
     
     # Update athlete flags for all successfully processed athletes
-    print("\nUpdating athlete data flags...")
     try:
         pg_conn = get_warehouse_connection()
         for _, athlete_uuid, _ in processed:
             update_athlete_data_flag(pg_conn, athlete_uuid, "readiness_screen", has_data=True)
         pg_conn.close()
-        print("Athlete flags updated successfully")
     except Exception as e:
         print(f"Warning: Could not update athlete flags: {str(e)}")
     
     # Check for duplicate athletes and prompt to merge
     if processed:
-        print("\nChecking for similar athlete names...")
         try:
             pg_conn = get_warehouse_connection()
             processed_uuids = [uuid for _, uuid, _ in processed]
-            check_and_merge_duplicates(conn=pg_conn, athlete_uuids=processed_uuids, min_similarity=0.80)
+            check_and_merge_duplicates(conn=pg_conn, athlete_uuids=processed_uuids)
             pg_conn.close()
         except Exception as e:
             print(f"Warning: Could not check for duplicates: {str(e)}")
-            import traceback
-            traceback.print_exc()
-    
-    # Summary
-    print("\n" + "=" * 60)
-    print("Processing Summary")
-    print("=" * 60)
-    print(f"Processed: {len(processed)} athletes")
-    print(f"Inserted: {inserted_count} rows")
-    print(f"Updated: {updated_count} rows")
-    print(f"Errors: {len(errors)} files")
     
     if errors:
-        print("\nErrors:")
         for error in errors:
-            print(f"  - {error}")
+            print(f"Error: {error}")
+    
+    if inserted_count + updated_count > 0:
+        print("Successful run and upload.")
     
     return [(name, uuid) for name, uuid, _ in processed]
 
@@ -449,12 +444,6 @@ def main():
     if not os.path.exists(db_dir_abs):
         os.makedirs(db_dir_abs, exist_ok=True)
     
-    # Print paths for debugging
-    print(f"Database path: {db_path}")
-    print(f"Database directory: {db_dir_abs}")
-    print(f"Database directory exists: {os.path.exists(db_dir_abs)}")
-    print(f"Database file exists: {os.path.exists(db_path)}")
-    
     # Processing options
     BATCH_PROCESS = True  # Process all folders in directory (False = single folder)
     USE_FOLDER_DIALOG = True  # Show folder selection dialog (only if BATCH_PROCESS=False)
@@ -465,7 +454,8 @@ def main():
         # Step 1: Process txt files from Output Files directory
         # Extract name and date from first line of each txt file (like Athletic Screen)
         # Insert directly into PostgreSQL
-        processed = process_txt_files(output_path)
+        athlete_uuid_env = os.environ.get("ATHLETE_UUID", "").strip() or None
+        processed = process_txt_files(output_path, athlete_uuid=athlete_uuid_env, profile=None)
         
         if not processed:
             print("No folders were processed.")
@@ -473,20 +463,13 @@ def main():
         
         # Step 2: Reorder database (optional)
         if REORDER_DATABASE:
-            print("\n4. Reordering database...")
             reorder_all_tables(db_path, sort_column="Name")
         
         # Step 3: Launch dashboard (optional)
         if LAUNCH_DASHBOARD:
-            print("\n5. Launching dashboard...")
-            print("   Dashboard will be available at http://127.0.0.1:8051")
             run_dashboard(db_path, port=8051, debug=True)
         else:
-            print("\n" + "=" * 60)
-            print("All processing complete!")
-            print("=" * 60)
-            print(f"\nTo launch the dashboard, run:")
-            print(f"  python python/readinessScreen/dashboard.py")
+            print("All processing complete.")
     else:
         # Single folder processing (original behavior)
         # Step 1: Process XML and ASCII files
@@ -503,20 +486,13 @@ def main():
         
         # Step 2: Reorder database (optional)
         if REORDER_DATABASE:
-            print("\n4. Reordering database...")
             reorder_all_tables(db_path, sort_column="Name")
         
         # Step 3: Launch dashboard (optional)
         if LAUNCH_DASHBOARD:
-            print("\n5. Launching dashboard...")
-            print("   Dashboard will be available at http://127.0.0.1:8051")
             run_dashboard(db_path, port=8051, debug=True)
         else:
-            print("\n" + "=" * 60)
-            print("All processing complete!")
-            print("=" * 60)
-            print(f"\nTo launch the dashboard, run:")
-            print(f"  python python/readinessScreen/dashboard.py")
+            print("All processing complete.")
 
 
 if __name__ == "__main__":

@@ -24,14 +24,14 @@ def login_to_proteus(page: Page) -> bool:
     logger.info(f"Navigating to login page: {login_url}")
     logger.info("Note: If browser window is visible, you can watch the process")
     try:
-        # Use longer timeout and less strict wait condition
+        # Use longer timeout and less strict wait condition (2 min for slow networks / after wake)
         # "domcontentloaded" is faster than "networkidle"
-        page.goto(login_url, wait_until="domcontentloaded", timeout=60000)
+        page.goto(login_url, wait_until="domcontentloaded", timeout=120000)
         logger.info("Page loaded, waiting for network to settle...")
         # Give it a moment for any dynamic content
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(5000)
     except PlaywrightTimeoutError as e:
-        logger.error(f"Timeout loading login page after 60 seconds")
+        logger.error("Timeout loading login page after 120 seconds")
         logger.error(f"Error details: {e}")
         logger.error("Possible causes:")
         logger.error("  - Slow internet connection")
@@ -62,7 +62,7 @@ def login_to_proteus(page: Page) -> bool:
                         'input[name="username"]', 'input[id*="username"]', 'input[placeholder*="email" i]',
                         'input[placeholder*="Email" i]', 'input[placeholder*="User" i]']:
             try:
-                page.wait_for_selector(selector, timeout=10000)
+                page.wait_for_selector(selector, timeout=20000)
                 email_selector = selector
                 break
             except:
@@ -86,7 +86,7 @@ def login_to_proteus(page: Page) -> bool:
                         'select[id*="location"]', 'input[placeholder*="location" i]',
                         'input[placeholder*="Location" i]', 'select[placeholder*="location" i]']:
             try:
-                if page.wait_for_selector(selector, timeout=5000, state="visible"):
+                if page.wait_for_selector(selector, timeout=10000, state="visible"):
                     location_selector = selector
                     break
             except:
@@ -125,14 +125,14 @@ def login_to_proteus(page: Page) -> bool:
         
         # Click continue and wait for navigation to password page
         try:
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=60000):
                 page.click(continue_button_selector)
             logger.info("Navigated to password page")
         except PlaywrightTimeoutError:
             logger.warning("Navigation timeout - page may have already changed, continuing...")
         
         # Wait for page to settle
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(3000)
         
         logger.info("Step 2: Filling password on second page...")
         
@@ -141,7 +141,7 @@ def login_to_proteus(page: Page) -> bool:
         for selector in ['input[type="password"]', 'input[name="password"]', 'input[id*="password"]',
                         'input[placeholder*="password" i]', 'input[placeholder*="Password" i]']:
             try:
-                page.wait_for_selector(selector, timeout=10000)
+                page.wait_for_selector(selector, timeout=20000)
                 password_selector = selector
                 break
             except:
@@ -197,13 +197,13 @@ def login_to_proteus(page: Page) -> bool:
         
         # Click login and wait for navigation
         try:
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=60000):
                 page.click(login_button_selector)
         except PlaywrightTimeoutError:
             logger.warning("Navigation timeout after login click - may have already navigated")
         
         # Wait a bit for any redirects
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(5000)
         
         # Check if we're logged in (not on login page anymore)
         current_url = page.url

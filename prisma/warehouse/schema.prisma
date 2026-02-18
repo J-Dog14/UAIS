@@ -14,6 +14,7 @@ model DAthletes {
   id                          String                 @id @default(uuid()) @map("athlete_uuid") @db.VarChar(36)
   name                        String
   normalizedName              String                 @unique @map("normalized_name")
+  email                       String?                @map("email")
   dateOfBirth                 DateTime?              @map("date_of_birth") @db.Date
   age                         Decimal?               @db.Decimal
   ageAtCollection             Decimal?               @map("age_at_collection") @db.Decimal
@@ -72,6 +73,7 @@ model DAthletes {
   readinessScreenY            FReadinessScreenY[]
 
   @@index([normalizedName], map: "idx_d_athletes_normalized_name")
+  @@index([email], map: "idx_d_athletes_email")
   @@index([appDbUuid], map: "idx_d_athletes_app_db_uuid")
   @@index([sourceSystem, sourceAthleteId], map: "idx_d_athletes_source_system")
   @@map("d_athletes")
@@ -674,25 +676,33 @@ model FKinematicsPitching {
   @@schema("public")
 }
 
+enum Handedness {
+  Left
+  Right
+
+  @@schema("public")
+}
+
 model FPitchingTrials {
-  id                Int       @id @default(autoincrement())
-  athleteUuid       String    @map("athlete_uuid") @db.VarChar(36)
-  sessionDate       DateTime  @map("session_date") @db.Date
-  sourceSystem      String    @default("pitching") @map("source_system") @db.VarChar(50)
-  sourceAthleteId   String?   @map("source_athlete_id") @db.VarChar(100)
-  ownerFilename     String?   @map("owner_filename")
-  trialIndex        Int       @map("trial_index")
-  velocityMph       Decimal?  @map("velocity_mph") @db.Decimal
-  score             Decimal?  @db.Decimal
-  ageAtCollection   Decimal?  @map("age_at_collection") @db.Decimal
-  ageGroup          String?   @map("age_group")
-  height            Decimal?  @db.Decimal
-  weight            Decimal?  @db.Decimal
-  metrics           Json      @db.JsonB
-  sessionXmlPath    String?   @map("session_xml_path")
-  sessionDataXmlPath String?  @map("session_data_xml_path")
-  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  athlete           DAthletes @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
+  id                Int         @id @default(autoincrement())
+  athleteUuid       String      @map("athlete_uuid") @db.VarChar(36)
+  sessionDate       DateTime    @map("session_date") @db.Date
+  sourceSystem      String      @default("pitching") @map("source_system") @db.VarChar(50)
+  sourceAthleteId   String?     @map("source_athlete_id") @db.VarChar(100)
+  ownerFilename     String?     @map("owner_filename")
+  handedness        Handedness? @map("handedness")
+  trialIndex        Int         @map("trial_index")
+  velocityMph       Decimal?    @map("velocity_mph") @db.Decimal
+  score             Decimal?    @db.Decimal
+  ageAtCollection   Decimal?    @map("age_at_collection") @db.Decimal
+  ageGroup          String?     @map("age_group")
+  height            Decimal?    @db.Decimal
+  weight            Decimal?    @db.Decimal
+  metrics           Json        @db.JsonB
+  sessionXmlPath    String?     @map("session_xml_path")
+  sessionDataXmlPath String?    @map("session_data_xml_path")
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  athlete           DAthletes   @relation(fields: [athleteUuid], references: [id], onDelete: Cascade)
 
   @@unique([athleteUuid, sessionDate, trialIndex], map: "idx_f_pitching_trials_unique")
   @@index([sessionDate], map: "idx_f_pitching_trials_date")

@@ -30,6 +30,7 @@ from common.athlete_manager import (
 from common.athlete_matcher import update_athlete_data_flag
 from common.athlete_utils import extract_source_athlete_id
 from common.duplicate_detector import check_and_merge_duplicates
+from common.session_duplicate_prompt import session_exists, prompt_duplicate_session
 
 # Import Google Drive utilities
 try:
@@ -475,17 +476,19 @@ def load_google_sheet_from_url(url: str) -> Optional[Any]:
         return None
 
 
-def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
+def process_mobility_file(file_path: str, conn, athlete_uuid: str = None) -> Dict[str, Any]:
     """
     Process a single mobility assessment Excel file or Google Sheet.
-    
+
     Uses per-file transaction: each file is processed in its own transaction
     that auto-rolls back on error, preventing cascading failures.
-    
+
     Args:
         file_path: Path to Excel file or .gsheet file
         conn: PostgreSQL connection
-        
+        athlete_uuid: Optional. When provided (e.g. Existing Athlete from Octane), use this UUID
+            and do not create a new athlete.
+
     Returns:
         Dictionary with processing results
     """
@@ -541,25 +544,26 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
         
         print(f"   Found {len(metrics)} assessment metrics")
         
-        # Get or create athlete
         source_athlete_id = extract_source_athlete_id(name)
-        
-        athlete_uuid = get_or_create_athlete(
-            name=name,
-            date_of_birth=demo_data.get('date_of_birth'),
-            height=demo_data.get('height'),
-            weight=demo_data.get('weight'),
-            email=demo_data.get('email'),
-            source_system="mobility",
-            source_athlete_id=source_athlete_id,
-            check_app_db=True
-        )
-        
-        print(f"   [OK] Got/created athlete UUID: {athlete_uuid}")
+        if athlete_uuid:
+            uuid_to_use = athlete_uuid
+            print(f"   [OK] Using provided athlete UUID: {athlete_uuid}")
+        else:
+            uuid_to_use, _ = get_or_create_athlete(
+                name=name,
+                date_of_birth=demo_data.get('date_of_birth'),
+                height=demo_data.get('height'),
+                weight=demo_data.get('weight'),
+                email=demo_data.get('email'),
+                source_system="mobility",
+                source_athlete_id=source_athlete_id,
+                check_app_db=True
+            )
+            print(f"   [OK] Got/created athlete UUID: {uuid_to_use}")
         
         # Update athlete data flag (before main insert to avoid transaction issues)
         try:
-            update_athlete_data_flag(conn, athlete_uuid, "mobility", has_data=True)
+            update_athlete_data_flag(conn, uuid_to_use, "mobility", has_data=True)
         except Exception as flag_error:
             print(f"   Warning: Could not update athlete flag: {flag_error}")
             # Continue processing - flag update is not critical
@@ -589,7 +593,7 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
         
         # Prepare data for insertion
         insert_data = {
-            'athlete_uuid': athlete_uuid,
+            'athlete_uuid': uuid_to_use,
             'session_date': session_date,
             'source_system': 'mobility',
             'source_athlete_id': source_athlete_id,
@@ -607,6 +611,13 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
         # Add all metrics
         insert_data.update(metrics)
         
+        # Safeguard 4 (Existing Athlete): prompt before overwriting existing session
+        if athlete_uuid:
+            if session_exists(conn, "f_mobility", uuid_to_use, session_date):
+                if not prompt_duplicate_session(session_date):
+                    print("   Skipping insert (user chose not to continue).")
+                    return {'success': False, 'action': 'skipped', 'athlete_uuid': uuid_to_use}
+        
         # Process file in its own transaction
         # This ensures that if one file fails, it doesn't affect others
         try:
@@ -617,7 +628,7 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
                     WHERE athlete_uuid = %s 
                     AND session_date = %s 
                     AND source_file = %s
-                """, (athlete_uuid, session_date, file_path))
+                """, (uuid_to_use, session_date, file_path))
                 
                 existing = cur.fetchone()
                 
@@ -625,7 +636,7 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
                     # Update existing record
                     set_parts = [f"{col} = %s" for col in insert_data.keys() if col != 'athlete_uuid']
                     update_values = [insert_data[col] for col in insert_data.keys() if col != 'athlete_uuid']
-                    update_values.append(athlete_uuid)
+                    update_values.append(uuid_to_use)
                     update_values.append(session_date)
                     update_values.append(file_path)
                     
@@ -639,7 +650,7 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
                     
                     conn.commit()
                     print(f"   [OK] Updated existing record")
-                    return {'success': True, 'action': 'updated', 'athlete_uuid': athlete_uuid}
+                    return {'success': True, 'action': 'updated', 'athlete_uuid': uuid_to_use}
                 else:
                     # Insert new record
                     cols = list(insert_data.keys())
@@ -653,7 +664,7 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
                     
                     conn.commit()
                     print(f"   [OK] Inserted new record")
-                    return {'success': True, 'action': 'inserted', 'athlete_uuid': athlete_uuid}
+                    return {'success': True, 'action': 'inserted', 'athlete_uuid': uuid_to_use}
         
         except Exception as e:
             # Rollback transaction on error
@@ -672,13 +683,15 @@ def process_mobility_file(file_path: str, conn) -> Dict[str, Any]:
         return {'success': False, 'error': str(e)}
 
 
-def process_mobility_directory(directory_path: str):
+def process_mobility_directory(directory_path: str, athlete_uuid: str = None):
     """
     Process all Excel files in the mobility assessments directory.
     Uses logging for all output.
-    
+
     Args:
         directory_path: Path to directory containing mobility assessment files
+        athlete_uuid: Optional. When provided (e.g. Existing Athlete from Octane), use this UUID
+            for all files and do not create new athletes.
     """
     logger = logging.getLogger(__name__)
     
@@ -824,7 +837,7 @@ def process_mobility_directory(directory_path: str):
         updated_count = 0
         
         for file_path in new_files:
-            result = process_mobility_file(str(file_path), conn)
+            result = process_mobility_file(str(file_path), conn, athlete_uuid=athlete_uuid)
             
             if result.get('success'):
                 processed.append(result)
@@ -859,7 +872,6 @@ def process_mobility_directory(directory_path: str):
                     check_and_merge_duplicates(
                         conn=conn, 
                         athlete_uuids=processed_uuids, 
-                        min_similarity=0.80,
                         auto_skip=is_automated  # Skip interactive prompts in automated mode
                     )
             except Exception as e:
@@ -1093,8 +1105,8 @@ def main():
     logger.info(f"Using directory: {excel_directory}")
     
     try:
-        # Process all files
-        process_mobility_directory(excel_directory)
+        athlete_uuid_env = os.environ.get("ATHLETE_UUID", "").strip() or None
+        process_mobility_directory(excel_directory, athlete_uuid=athlete_uuid_env)
         
         logger.info("=" * 80)
         logger.info("All processing complete!")

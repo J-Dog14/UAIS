@@ -1,7 +1,12 @@
 """
 Main orchestration script for Proteus data processing.
 Handles web automation (download) and ETL processing.
+
+Backfill failed dates (run from project root):
+  python python/proteus/main.py --start 2026-01-28 --end 2026-02-11
+  (Downloads that date range once and runs ETL on the export.)
 """
+import argparse
 import os
 import sys
 import logging
@@ -236,4 +241,24 @@ def main():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Run Proteus download + ETL. Use --start/--end to backfill a date range."
+    )
+    parser.add_argument(
+        "--start",
+        metavar="YYYY-MM-DD",
+        help="Backfill start date (use with --end). Overrides default date range.",
+    )
+    parser.add_argument(
+        "--end",
+        metavar="YYYY-MM-DD",
+        help="Backfill end date (use with --start). Overrides default date range.",
+    )
+    args = parser.parse_args()
+    if args.start:
+        os.environ["PROTEUS_START_DATE"] = args.start
+        logger.info("Backfill start date: %s", args.start)
+    if args.end:
+        os.environ["PROTEUS_END_DATE"] = args.end
+        logger.info("Backfill end date: %s", args.end)
     main()

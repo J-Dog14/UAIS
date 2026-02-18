@@ -34,6 +34,8 @@ sys.path.insert(0, str(project_root))
 
 from python.common.athlete_manager import get_warehouse_connection
 from python.common.age_utils import calculate_age_at_collection, calculate_age_group
+from python.common.path_resolution import resolve_pitching_data_path
+from python.common.session_duplicate_prompt import session_exists, prompt_duplicate_session
 
 
 EXCLUDED_VARIABLE_PATTERNS = [
@@ -540,6 +542,7 @@ def main() -> int:
     parser.add_argument("--max-sessions", type=int, default=0, help="Optional cap for debugging (0 = no cap)")
     parser.add_argument("--backfill-scores", action="store_true", help="Only update score from existing metrics + velocity_mph (no file scan)")
     parser.add_argument("--backfill-height-weight", action="store_true", help="Only update height/weight from analytics.d_athletes (no file scan)")
+    parser.add_argument("--athlete-name", type=str, default="", help="Process only this athlete (resolve path from name; New Athlete flow)")
     args = parser.parse_args()
 
     conn = get_warehouse_connection()
@@ -605,6 +608,12 @@ def main() -> int:
         athlete_lookup, uuid_to_dob = load_athlete_lookup(conn)
 
         pairs = find_session_folders(pitching_root)
+        if getattr(args, "athlete_name", None) and args.athlete_name.strip():
+            resolved = resolve_pitching_data_path(pitching_root, args.athlete_name.strip())
+            if resolved:
+                pairs = [(sx, sdx) for sx, sdx in pairs if sx.parent == resolved]
+            else:
+                pairs = []
         if args.max_sessions and args.max_sessions > 0:
             pairs = pairs[: args.max_sessions]
 
@@ -658,6 +667,13 @@ def main() -> int:
                 sessions_no_owners += 1
                 continue
             sessions_loaded += 1
+
+            # Safeguard 4 (Existing Athlete): prompt before overwriting existing session
+            athlete_uuid_env = os.environ.get("ATHLETE_UUID", "").strip() or None
+            if athlete_uuid_env and athlete_uuid == athlete_uuid_env:
+                if session_exists(conn, "f_pitching_trials", athlete_uuid, session_date.isoformat()[:10]):
+                    if not prompt_duplicate_session(session_date.isoformat()[:10]):
+                        continue
 
             # Insert each owner (trial) in document order, using trial_index
             for trial_index, (owner_filename, metrics) in enumerate(owners):

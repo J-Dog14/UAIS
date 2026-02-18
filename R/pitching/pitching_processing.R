@@ -70,17 +70,19 @@ find_and_source_common <- function() {
 find_and_source_common()
 
 # ---------- Helpers ----------
-# Progress logging helper (timestamp removed for cleaner output)
+# Progress logging: when PITCHING_VERBOSE is FALSE, only [ERROR] and [WARNING] messages are printed.
 log_progress <- function(...) {
-  # Use do.call to handle arguments properly, including any sep= arguments
   args <- list(...)
-  # Remove sep if present (we'll ignore it)
   args <- args[names(args) != "sep"]
   message <- do.call(paste0, args)
-  # Force output immediately
-  cat(message, "\n", sep = "")
-  flush.console()  # Force output to console immediately
+  if (PITCHING_VERBOSE || grepl("\\[ERROR\\]|\\[WARNING\\]", message)) {
+    cat(message, "\n", sep = "")
+    flush.console()
+  }
 }
+
+# Quiet mode: set PITCHING_VERBOSE=1 for full progress output
+PITCHING_VERBOSE <- identical(Sys.getenv("PITCHING_VERBOSE", ""), "1")
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 nzchr <- function(x) ifelse(is.na(x) | x == "", NA_character_, x)
@@ -98,7 +100,7 @@ for (path in athlete_manager_paths) {
   if (file.exists(path)) {
     source(path)
     athlete_manager_loaded <- TRUE
-    log_progress("Loaded athlete_manager.R from:", path)
+    if (PITCHING_VERBOSE) cat("Loaded athlete_manager.R from:", path, "\n", sep = "")
     break
   }
 }
@@ -107,8 +109,6 @@ if (!athlete_manager_loaded) {
 }
 
 # ---------- Configuration ----------
-# Set to NULL to use current directory, or specify path
-# Load from environment variable, with fallback
 DATA_ROOT <- Sys.getenv("PITCHING_DATA_DIR", unset = "H:/Pitching/Data")  # Set to your pitching data directory path, NULL for testing with local files
 USE_WAREHOUSE <- TRUE  # Set to TRUE to write to PostgreSQL warehouse, FALSE for local SQLite
 DB_FILE <- "pitching_data.db"  # Only used if USE_WAREHOUSE = FALSE
@@ -776,17 +776,11 @@ extract_metric_data <- function(doc, owner_name) {
   
   # Debug output for first few calls
   if (length(all_data) == 0) {
-    # Log what we found for debugging
-    if (length(folders_seen) > 0 && length(folders_seen) <= 20) {
-      # Force output with cat for debugging
+    if (PITCHING_VERBOSE && length(folders_seen) > 0 && length(folders_seen) <= 20) {
       cat("  [DEBUG extract_metric_data] Folders seen:", paste(unique(folders_seen), collapse = ", "), "\n")
       cat("  [DEBUG extract_metric_data] Fastball folders found:", fastball_folders_found, "\n")
       cat("  [DEBUG extract_metric_data] Skipped folders (first 10):", paste(unique(skipped_folders)[1:min(10, length(unique(skipped_folders)))], collapse = ", "), "\n")
       flush.console()
-      
-      log_progress("      [DEBUG extract_metric_data] Folders seen:", paste(unique(folders_seen), collapse = ", "))
-      log_progress("      [DEBUG extract_metric_data] Fastball folders found:", fastball_folders_found)
-      log_progress("      [DEBUG extract_metric_data] Skipped folders:", paste(unique(skipped_folders), collapse = ", "))
     }
     return(tibble())
   }
@@ -800,6 +794,7 @@ extract_metric_data <- function(doc, owner_name) {
 
 # ---------- Main processing function ----------
 process_all_files <- function(data_root = NULL) {
+  if (!PITCHING_VERBOSE) cat("Pitching processing started.\n")
   # Determine root directory
   # If data_root parameter is provided, use it; otherwise use DATA_ROOT global variable
   root_dir <- if (!is.null(data_root)) {
@@ -894,6 +889,8 @@ process_all_files <- function(data_root = NULL) {
   
   log_progress("Found", length(session_files), "session.xml files")
   log_progress("Found", length(session_data_files), "session_data.xml files")
+  n_sessions <- length(session_files) + length(session_data_files)
+  if (!PITCHING_VERBOSE) cat("Processing", n_sessions, "sessions.\n")
   
   if (length(session_files) == 0 && length(session_data_files) == 0) {
     log_progress("ERROR: No XML files found in", root_dir)
@@ -913,15 +910,15 @@ process_all_files <- function(data_root = NULL) {
   use_warehouse <- USE_WAREHOUSE
   
   if (use_warehouse) {
-    # Connect to PostgreSQL warehouse
     log_progress("Connecting to PostgreSQL warehouse database...")
-    cat("\n*** ATTEMPTING WAREHOUSE CONNECTION ***\n")
-    cat("USE_WAREHOUSE is set to: TRUE\n")
-    flush.console()
+    if (PITCHING_VERBOSE) {
+      cat("\n*** ATTEMPTING WAREHOUSE CONNECTION ***\n")
+      cat("USE_WAREHOUSE is set to: TRUE\n")
+      flush.console()
+    }
     
     con <- tryCatch({
       warehouse_conn <- get_warehouse_connection()
-      # Verify connection works by testing a simple query
       test_query <- tryCatch({
         DBI::dbGetQuery(warehouse_conn, "SELECT 1 as test")
         TRUE
@@ -935,11 +932,13 @@ process_all_files <- function(data_root = NULL) {
         DBI::dbDisconnect(warehouse_conn)
         NULL
       } else {
+        if (!PITCHING_VERBOSE) cat("Connected to warehouse.\n")
         warehouse_conn
       }
     }, error = function(e) {
-      cat("\n*** WAREHOUSE CONNECTION FAILED ***\n")
-      cat("ERROR:", conditionMessage(e), "\n")
+      if (PITCHING_VERBOSE) {
+        cat("\n*** WAREHOUSE CONNECTION FAILED ***\n")
+        cat("ERROR:", conditionMessage(e), "\n")
       cat("This means data will be written to LOCAL SQLite database instead of Neon!\n")
       cat("File:", DB_FILE, "\n")
       cat("\nTo fix this, check:\n")
@@ -948,28 +947,31 @@ process_all_files <- function(data_root = NULL) {
       cat("  3. Network connectivity to Neon database\n")
       cat("\n")
       flush.console()
+      }
       log_progress("ERROR: Could not connect to warehouse database:", conditionMessage(e))
       log_progress("Falling back to local SQLite database")
       use_warehouse <<- FALSE
-      # Fall through to SQLite connection
       NULL
     })
     
     if (is.null(con)) {
-      # Fallback to SQLite
-      cat("\n*** USING LOCAL SQLITE DATABASE (FALLBACK) ***\n")
-      cat("WARNING: Data will NOT be written to Neon warehouse!\n")
-      cat("Local database file:", DB_FILE, "\n")
-      cat("\n")
-      flush.console()
+      if (PITCHING_VERBOSE) {
+        cat("\n*** USING LOCAL SQLITE DATABASE (FALLBACK) ***\n")
+        cat("WARNING: Data will NOT be written to Neon warehouse!\n")
+        cat("Local database file:", DB_FILE, "\n")
+        cat("\n")
+        flush.console()
+      }
       use_warehouse <<- FALSE
       con <- DBI::dbConnect(RSQLite::SQLite(), DB_FILE)
       log_progress("Using local SQLite database as fallback")
     } else {
-      cat("\n*** SUCCESSFULLY CONNECTED TO WAREHOUSE DATABASE ***\n")
-      cat("Data will be written to Neon PostgreSQL warehouse\n")
-      cat("\n")
-      flush.console()
+      if (PITCHING_VERBOSE) {
+        cat("\n*** SUCCESSFULLY CONNECTED TO WAREHOUSE DATABASE ***\n")
+        cat("Data will be written to Neon PostgreSQL warehouse\n")
+        cat("\n")
+        flush.console()
+      }
       log_progress("Connected to warehouse database")
     }
   } else {
@@ -1861,7 +1863,30 @@ process_all_files <- function(data_root = NULL) {
               log_progress("  Added weight to f_pitching_trials")
             }
           }
-          # Insert/upsert trials
+          # Safeguard 4 (Existing Athlete): prompt before overwriting existing session
+          skip_this_session <- FALSE
+          athlete_uuid_env <- trimws(Sys.getenv("ATHLETE_UUID", ""))
+          if (nzchar(athlete_uuid_env)) {
+            au <- as.character(trials_df$athlete_uuid[1])
+            sd <- trials_df$session_date[1]
+            if (au == athlete_uuid_env) {
+              existing <- DBI::dbGetQuery(con,
+                "SELECT 1 FROM public.f_pitching_trials WHERE athlete_uuid = $1 AND session_date = $2 LIMIT 1",
+                params = list(au, sd))
+              if (nrow(existing) > 0) {
+                date_str <- format(sd, "%Y-%m-%d")
+                cat("DUPLICATE_SESSION:", date_str, "\n", sep = "")
+                cat("It looks like you already ran this data for the following date: ", date_str, ". Reply 'yes' to continue or 'no' to abort.\n", sep = "")
+                flush.console()
+                response <- tryCatch(trimws(tolower(readLines(stdin(), n = 1))), error = function(e) "no")
+                if (response != "yes") {
+                  skip_this_session <- TRUE
+                  log_progress("  User chose not to continue. Skipping this session.")
+                }
+              }
+            }
+          }
+          if (!skip_this_session) {
           trials_df$source_system <- "pitching"
           for (r in seq_len(nrow(trials_df))) {
             row <- trials_df[r, ]
@@ -1891,6 +1916,7 @@ process_all_files <- function(data_root = NULL) {
             ))
           }
           log_progress("  [SUCCESS] Wrote", nrow(trials_df), "rows to f_pitching_trials")
+          }
         }
       }
       
@@ -2360,69 +2386,59 @@ process_all_files <- function(data_root = NULL) {
   use_warehouse_final <- use_warehouse
   
   if (use_warehouse_final) {
-    cat("\n")
-    cat("=", rep("=", 80), "\n", sep = "")
-    cat("PROCESSING COMPLETE!\n")
-    cat("=", rep("=", 80), "\n", sep = "")
-    cat("✓ Database: PostgreSQL warehouse (Neon)\n")
-    cat("✓ Athletes stored in: analytics.d_athletes\n")
-    cat("✓ Metrics stored in: f_kinematics_pitching\n")
-    cat("✓ Total athletes processed:", length(athlete_list), "\n")
-    if (exists("warehouse_df") && !is.null(warehouse_df) && nrow(warehouse_df) > 0) {
-      cat("✓ Total metric records:", nrow(warehouse_df), "\n")
-    } else {
-      cat("⚠ Total metric records: 0\n")
+    if (PITCHING_VERBOSE) {
+      cat("\n")
+      cat("=", rep("=", 80), "\n", sep = "")
+      cat("PROCESSING COMPLETE!\n")
+      cat("=", rep("=", 80), "\n", sep = "")
+      cat("✓ Database: PostgreSQL warehouse (Neon)\n")
+      cat("✓ Athletes stored in: analytics.d_athletes\n")
+      cat("✓ Metrics stored in: f_kinematics_pitching\n")
+      cat("✓ Total athletes processed:", length(athlete_list), "\n")
+      if (exists("warehouse_df") && !is.null(warehouse_df) && nrow(warehouse_df) > 0) {
+        cat("✓ Total metric records:", nrow(warehouse_df), "\n")
+      } else {
+        cat("⚠ Total metric records: 0\n")
+      }
+      cat("=", rep("=", 80), "\n", sep = "")
     }
-    cat("=", rep("=", 80), "\n", sep = "")
     log_progress("")
-    log_progress("=", rep("=", 60), sep = "")
     log_progress("PROCESSING COMPLETE!")
-    log_progress("=", rep("=", 60), sep = "")
-    log_progress("Database: PostgreSQL warehouse (uais_warehouse)")
-    log_progress("Athletes stored in: analytics.d_athletes")
-    log_progress("Metrics stored in: f_kinematics_pitching")
     log_progress("Total athletes processed:", length(athlete_list))
     if (exists("warehouse_df") && !is.null(warehouse_df) && nrow(warehouse_df) > 0) {
       log_progress("Total metric records:", nrow(warehouse_df))
     } else {
       log_progress("Total metric records: 0")
     }
-    log_progress("=", rep("=", 60), sep = "")
   } else {
-    # Get final database size (local SQLite)
     db_size <- if (file.exists(DB_FILE)) file.info(DB_FILE)$size else 0
-    
-    cat("\n")
-    cat("=", rep("=", 80), "\n", sep = "")
-    cat("⚠ PROCESSING COMPLETE - BUT DATA WENT TO LOCAL DATABASE! ⚠\n")
-    cat("=", rep("=", 80), "\n", sep = "")
-    cat("⚠ Database: LOCAL SQLite (NOT Neon warehouse!)\n")
-    cat("⚠ Database file:", DB_FILE, "\n")
-    cat("⚠ Database size:", round(db_size / 1024 / 1024, 2), "MB\n")
-    cat("⚠ Total athletes:", length(athlete_list), "\n")
-    if (exists("metric_df") && !is.null(metric_df) && nrow(metric_df) > 0) {
-      cat("⚠ Total metric records:", nrow(metric_df), "\n")
-    } else {
-      cat("⚠ Total metric records: 0\n")
+    if (PITCHING_VERBOSE) {
+      cat("\n")
+      cat("=", rep("=", 80), "\n", sep = "")
+      cat("⚠ PROCESSING COMPLETE - BUT DATA WENT TO LOCAL DATABASE! ⚠\n")
+      cat("=", rep("=", 80), "\n", sep = "")
+      cat("⚠ Database: LOCAL SQLite (NOT Neon warehouse!)\n")
+      cat("⚠ Database file:", DB_FILE, "\n")
+      cat("⚠ Total athletes:", length(athlete_list), "\n")
+      if (exists("metric_df") && !is.null(metric_df) && nrow(metric_df) > 0) {
+        cat("⚠ Total metric records:", nrow(metric_df), "\n")
+      }
+      cat("=", rep("=", 80), "\n", sep = "")
     }
-    cat("\n")
-    cat("⚠ WARNING: Data was NOT written to Neon warehouse!\n")
-    cat("⚠ Check connection settings and try again to write to Neon.\n")
-    cat("=", rep("=", 80), "\n", sep = "")
-    log_progress("")
-    log_progress("=", rep("=", 60), sep = "")
-    log_progress("PROCESSING COMPLETE!")
-    log_progress("=", rep("=", 60), sep = "")
-    log_progress("Database file:", DB_FILE)
-    log_progress("Database size:", round(db_size / 1024 / 1024, 2), "MB")
+    log_progress("PROCESSING COMPLETE (local SQLite)")
     log_progress("Total athletes:", length(athlete_list))
     if (exists("metric_df") && !is.null(metric_df) && nrow(metric_df) > 0) {
       log_progress("Total metric records:", nrow(metric_df))
     } else {
       log_progress("Total metric records: 0")
     }
-    log_progress("=", rep("=", 60), sep = "")
   }
+  rows_uploaded <- 0L
+  if (use_warehouse_final && exists("warehouse_df") && !is.null(warehouse_df) && nrow(warehouse_df) > 0)
+    rows_uploaded <- nrow(warehouse_df)
+  if (!use_warehouse_final && exists("metric_df") && !is.null(metric_df) && nrow(metric_df) > 0)
+    rows_uploaded <- nrow(metric_df)
+  return(invisible(list(rows_uploaded = rows_uploaded)))
 }
 
 # ---------- Auto-run (only if not sourced from main.R) ----------

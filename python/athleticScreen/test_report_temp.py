@@ -126,7 +126,7 @@ def main():
                 try:
                     source_athlete_id = extract_source_athlete_id(name)
                     
-                    athlete_uuid = get_or_create_athlete(
+                    athlete_uuid, _ = get_or_create_athlete(
                         name=name,
                         source_system="athletic_screen",
                         source_athlete_id=source_athlete_id

@@ -150,7 +150,12 @@ def process_proteus_file(file_path: Path, conn) -> list:
                 
             name = athlete_row.get('user_name') or str(source_id)
             birth_date = athlete_row.get('birth_date')
-            gender = athlete_row.get('sex')
+            sex_val = athlete_row.get('sex')
+            # Normalize gender: DB expects text or None. Excel NaN/float breaks COALESCE(gender, %s).
+            if pd.isna(sex_val) or not isinstance(sex_val, str):
+                gender = None
+            else:
+                gender = str(sex_val).strip() or None
             height = athlete_row.get('height')
             weight = athlete_row.get('weight')
             
@@ -174,7 +179,7 @@ def process_proteus_file(file_path: Path, conn) -> list:
                 birth_date = None
             
             try:
-                athlete_uuid = get_or_create_athlete(
+                athlete_uuid, _ = get_or_create_athlete(
                     name=name,
                     date_of_birth=birth_date,
                     gender=gender,
@@ -251,6 +256,10 @@ def process_proteus_file(file_path: Path, conn) -> list:
         
         if column_mapping:
             clean_df_renamed = clean_df_renamed.rename(columns=column_mapping)
+        
+        # Don't insert source 'id' column - warehouse f_proteus uses serial PK. Source id causes UniqueViolation on re-run.
+        if 'id' in clean_df_renamed.columns:
+            clean_df_renamed = clean_df_renamed.drop(columns=['id'])
         
         # Write to database (write_df will automatically batch to avoid parameter limits)
         engine = get_warehouse_engine()
@@ -407,7 +416,6 @@ def run_daily_proteus_ingest(inbox_dir: Optional[Path] = None, archive_dir: Opti
                 check_and_merge_duplicates(
                     conn=conn, 
                     athlete_uuids=unique_processed_uuids, 
-                    min_similarity=0.80,
                     auto_skip=is_automated  # Skip interactive prompts in automated mode
                 )
             except Exception as e:

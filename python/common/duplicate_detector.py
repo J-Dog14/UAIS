@@ -16,7 +16,7 @@ from difflib import SequenceMatcher
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from python.common.athlete_manager import get_warehouse_connection
+from python.common.athlete_manager import get_warehouse_connection, NAME_SIMILARITY_THRESHOLD
 from python.common.source_athlete_map import merge_source_mappings, get_all_source_mappings
 from python.common.athlete_cleanup import update_fact_tables_only, clean_athlete_name_for_processing
 from psycopg2.extras import RealDictCursor
@@ -223,7 +223,7 @@ def merge_similar_athletes(
         
         # Commit all changes together
         conn.commit()
-        logger.info("  ✓ All merge steps committed to database")
+        logger.info("  [OK] All merge steps committed to database")
         
         # Step 5: Update flags (after commit to ensure data is consistent)
         logger.info("  Step 5: Updating athlete flags...")
@@ -247,10 +247,10 @@ def merge_similar_athletes(
             if result[1] != cleaned_normalized:
                 logger.warning(f"Merge verification: normalized_name mismatch. Expected {cleaned_normalized}, got {result[1]}")
         
-        logger.info("  ✓ Merge complete and verified!")
+        logger.info("  [OK] Merge complete and verified!")
     except Exception as e:
         conn.rollback()
-        logger.error(f"  ✗ Merge failed, rolled back: {e}")
+        logger.error(f"  [X] Merge failed, rolled back: {e}")
         raise
     
     return {
@@ -349,7 +349,7 @@ def interactive_merge_prompt(
 def find_similar_athletes_for_uuids(
     conn,
     athlete_uuids: List[str],
-    min_similarity: float = 0.80
+    min_similarity: float = None,
 ) -> List[Tuple[Dict[str, Any], Dict[str, Any], float]]:
     """
     Find pairs of athletes with similar names, focusing on the provided UUIDs.
@@ -366,6 +366,8 @@ def find_similar_athletes_for_uuids(
         List of tuples: (target_athlete, other_athlete, similarity_score)
         where target_athlete is one of the provided UUIDs
     """
+    if min_similarity is None:
+        min_similarity = NAME_SIMILARITY_THRESHOLD
     if not athlete_uuids:
         return []
     
@@ -479,7 +481,7 @@ def find_similar_athletes_for_uuids(
 def check_and_merge_duplicates(
     conn=None,
     athlete_uuids: Optional[List[str]] = None,
-    min_similarity: float = 0.80,
+    min_similarity: float = None,
     auto_skip: bool = False
 ) -> Dict[str, Any]:
     """
@@ -496,6 +498,8 @@ def check_and_merge_duplicates(
     Returns:
         Dictionary with summary statistics
     """
+    if min_similarity is None:
+        min_similarity = NAME_SIMILARITY_THRESHOLD
     close_conn = False
     if conn is None:
         conn = get_warehouse_connection()

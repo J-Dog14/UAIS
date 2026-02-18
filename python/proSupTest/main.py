@@ -21,10 +21,11 @@ python_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(python_dir))
 
 from common.config import get_raw_paths, get_warehouse_engine
-from common.athlete_manager import get_warehouse_connection, get_or_create_athlete
+from common.athlete_manager import get_warehouse_connection, get_or_create_athlete, update_athlete_in_warehouse
 from common.athlete_matcher import update_athlete_data_flag
 from common.athlete_utils import extract_source_athlete_id
 from common.duplicate_detector import check_and_merge_duplicates
+from common.session_duplicate_prompt import session_exists, prompt_duplicate_session
 from common.db_utils import write_df
 from proSupTest.file_parsers import (
     select_folder_dialog,
@@ -346,28 +347,25 @@ def find_ascii_file_for_folder(folder_path: str) -> Optional[str]:
     return None
 
 
-def process_single_folder(folder_path: str):
+def process_single_folder(folder_path: str, athlete_uuid: str = None, profile: dict = None):
     """
     Process a single folder containing Session.xml and insert data into PostgreSQL.
-    
+
     Args:
         folder_path: Path to folder containing Session.xml
+        athlete_uuid: Optional. When provided (e.g. Existing Athlete from Octane), use this UUID
+            for inserts and do not create a new athlete. Missing profile fields are filled from XML.
+        profile: Optional dict of existing profile fields; only missing fields are filled from XML.
     """
-    print("=" * 60)
-    print("Pro-Sup Test Data Processing")
-    print("=" * 60)
-    print(f"\nProcessing folder: {folder_path}")
+    print("Pro-Sup Test")
     
     # Find Session.xml
     xml_file_path = find_session_xml(folder_path)
     if not xml_file_path:
         raise FileNotFoundError(f"No 'Session' XML file found in: {folder_path}")
     
-    print(f"Found XML file: {xml_file_path}")
-    
     # Extract test date from folder name
     test_date = extract_test_date_from_folder(folder_path)
-    print(f"Test date: {test_date}")
     
     # Parse XML data
     try:
@@ -375,11 +373,11 @@ def process_single_folder(folder_path: str):
         athlete_name = xml_data['name']
         print(f"Athlete: {athlete_name}")
     except Exception as e:
-        print(f"Error parsing XML: {e}")
+        print(f"Error: {e}")
         raise
     
-    # Connect to PostgreSQL
-    print("\nConnecting to PostgreSQL warehouse...")
+    print("Processing 1 file")
+    
     pg_conn = get_warehouse_connection()
     pg_engine = get_warehouse_engine()
     
@@ -390,51 +388,54 @@ def process_single_folder(folder_path: str):
         weight = _safe_float(xml_data.get('weight'))
         age = xml_data.get('age')
         
-        print(f"\nGetting/creating athlete: {athlete_name}")
-        # Extract source_athlete_id (initials if present, otherwise cleaned name)
         source_athlete_id = extract_source_athlete_id(athlete_name)
-        
-        athlete_uuid = get_or_create_athlete(
-            name=athlete_name,  # Will be cleaned by get_or_create_athlete (removes dates, initials, etc.)
-            source_system="pro_sup",
-            source_athlete_id=source_athlete_id,
-            date_of_birth=dob_str,
-            age=age,
-            height=height,
-            weight=weight
-        )
-        print(f"Athlete UUID: {athlete_uuid}")
-        
-        # Update data flag
+        if athlete_uuid:
+            # Fill missing profile from XML (non-destructive)
+            updates = {}
+            if dob_str and (not profile or not profile.get("date_of_birth")):
+                updates["date_of_birth"] = dob_str
+            if age is not None and (not profile or profile.get("age") is None):
+                updates["age"] = age
+            if height is not None and (not profile or profile.get("height") is None):
+                updates["height"] = height
+            if weight is not None and (not profile or profile.get("weight") is None):
+                updates["weight"] = weight
+            if updates:
+                update_athlete_in_warehouse(athlete_uuid, conn=pg_conn, **updates)
+            print("Successful match with athlete in DB")
+        else:
+            athlete_uuid, created = get_or_create_athlete(
+                name=athlete_name,
+                source_system="pro_sup",
+                source_athlete_id=source_athlete_id,
+                date_of_birth=dob_str,
+                age=age,
+                height=height,
+                weight=weight
+            )
+            print("New athlete profile created" if created else "Successful match with athlete in DB")
+            try:
+                check_and_merge_duplicates(conn=pg_conn, athlete_uuids=[athlete_uuid])
+            except Exception as e:
+                print(f"Warning: Could not check for duplicates: {str(e)}")
+                import traceback
+                traceback.print_exc()
         update_athlete_data_flag(pg_conn, athlete_uuid, "pro_sup", has_data=True)
-        
-        # Check for duplicate athletes and prompt to merge
-        print("\nChecking for similar athlete names...")
-        try:
-            check_and_merge_duplicates(conn=pg_conn, athlete_uuids=[athlete_uuid], min_similarity=0.80)
-        except Exception as e:
-            print(f"Warning: Could not check for duplicates: {str(e)}")
-            import traceback
-            traceback.print_exc()
         
         # Find and parse ASCII file
         ascii_file_path = find_ascii_file_for_folder(folder_path)
         
         ascii_data = {}
         if ascii_file_path:
-            print(f"\nFound ASCII file: {ascii_file_path}")
             try:
                 # Verify test date matches
                 ascii_test_date = extract_test_date_from_ascii(ascii_file_path)
                 if ascii_test_date == test_date:
                     ascii_data = parse_ascii_file(ascii_file_path)
-                    print("ASCII data parsed successfully")
                 else:
                     print(f"Warning: ASCII test date ({ascii_test_date}) doesn't match folder date ({test_date})")
             except Exception as e:
                 print(f"Warning: Could not parse ASCII file: {e}")
-        else:
-            print("\nNo ASCII file found - using XML data only")
         
         # Combine XML and ASCII data
         insert_data = {
@@ -591,12 +592,15 @@ def process_single_folder(folder_path: str):
                 insert_data['total_score'] = None
         except Exception as e:
             print(f"Warning: Could not calculate total_score: {e}")
-            import traceback
-            traceback.print_exc()
             insert_data['total_score'] = None
         
+        # Safeguard 4 (Existing Athlete): if this session already exists, prompt before overwriting
+        if os.environ.get("ATHLETE_UUID", "").strip():
+            if session_exists(pg_conn, "f_pro_sup", athlete_uuid, test_date):
+                if not prompt_duplicate_session(test_date):
+                    print("Skipping insert (user chose not to continue).")
+                    return
         # UPSERT into PostgreSQL using ON CONFLICT
-        print(f"\nInserting/updating data in PostgreSQL...")
         with pg_conn.cursor() as cur:
             # Check if row exists
             cur.execute("""
@@ -619,7 +623,6 @@ def process_single_folder(folder_path: str):
                     WHERE athlete_uuid = %s AND session_date = %s
                 """, update_values)
                 pg_conn.commit()
-                print("✓ Updated existing Pro-Sup data")
             else:
                 # Insert new row - ensure column order matches table schema exactly
                 # Table column order (excluding id and created_at which are auto-generated):
@@ -646,10 +649,8 @@ def process_single_folder(folder_path: str):
                     VALUES ({placeholders})
                 """, values)
                 pg_conn.commit()
-                print("✓ Inserted new Pro-Sup data")
         
         # Generate report
-        print("\nGenerating PDF report...")
         try:
             generate_report_from_postgres(
                 athlete_uuid=athlete_uuid,
@@ -658,15 +659,10 @@ def process_single_folder(folder_path: str):
                 output_dir=os.getenv('PRO_SUP_REPORTS_DIR', "D:/Pro-Sup Test/Reports"),
                 conn=pg_conn
             )
-            print("✓ Report generated successfully")
         except Exception as e:
             print(f"Warning: Could not generate report: {e}")
-            import traceback
-            traceback.print_exc()
         
-        print("\n" + "=" * 60)
-        print("Processing complete!")
-        print("=" * 60)
+        print("Successful run and upload.")
         
     finally:
         pg_conn.close()
@@ -698,7 +694,8 @@ def main():
     
     # Process the selected folder
     try:
-        process_single_folder(selected_folder)
+        athlete_uuid_env = os.environ.get("ATHLETE_UUID", "").strip() or None
+        process_single_folder(selected_folder, athlete_uuid=athlete_uuid_env, profile=None)
     except Exception as e:
         print(f"\nError processing folder: {e}")
         import traceback

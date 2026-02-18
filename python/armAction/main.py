@@ -28,13 +28,7 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true", help="Parse and print what would be ingested; no DB writes, no report")
     args = parser.parse_args()
 
-    print("=" * 80)
-    print("ACTION PLUS MOVEMENT ANALYSIS")
-    if args.dry_run:
-        print("  [DRY RUN - no database writes, no report]")
-    print("=" * 80)
-    print("Integrated with UAIS Warehouse Database")
-    print()
+    print("Arm Action" + (" [DRY RUN]" if args.dry_run else ""))
 
     if not os.path.exists(APLUS_DATA_PATH):
         print(f"ERROR: Data file not found: {APLUS_DATA_PATH}")
@@ -44,73 +38,51 @@ if __name__ == "__main__":
         print(f"ERROR: Events file not found: {APLUS_EVENTS_PATH}")
         sys.exit(1)
 
-    print(f"Reading data from:")
-    print(f"  Events: {APLUS_EVENTS_PATH}")
-    print(f"  Kinematics: {APLUS_DATA_PATH}\n")
-
     if args.dry_run:
         ingest_data(APLUS_DATA_PATH, APLUS_EVENTS_PATH, dry_run=True)
-        print("=" * 80)
         print("Dry run complete.")
-        print("=" * 80)
         sys.exit(0)
 
     # Get warehouse connection to verify it works
     try:
         conn = get_warehouse_connection()
-        print(f"Connected to warehouse database: {conn.info.dbname}")
         conn.close()
     except Exception as e:
         print(f"ERROR: Failed to connect to warehouse database: {e}")
         print("Please check your database configuration in config/db_connections.yaml")
         sys.exit(1)
 
-    print()
-
-    # Initialize temp table for current session data
-    print("Initializing temporary table for current session...")
     conn = get_warehouse_connection()
     try:
         init_temp_table(conn)
         clear_temp_table(conn)
     finally:
         conn.close()
-    print("Temporary table initialized.\n")
 
-    # Initialize athletes (no-op now, but kept for compatibility)
-    print("Initializing athlete management...")
     init_athletes_db()
-    print("Athlete management initialized.\n")
+    athlete_uuid_env = os.environ.get("ATHLETE_UUID", "").strip() or None
+    print("Processing 1 file")
+    processed_athlete_uuids, athlete_first_seen = ingest_data(
+        APLUS_DATA_PATH, APLUS_EVENTS_PATH, athlete_uuid=athlete_uuid_env
+    )
 
-    print("Ingesting movement data into warehouse...")
-    processed_athlete_uuids = ingest_data(APLUS_DATA_PATH, APLUS_EVENTS_PATH)
+    for name, created in athlete_first_seen:
+        print(f"Athlete: {name}")
+        print("New athlete profile created" if created else "Successful match with athlete in DB")
 
-    # Update athletes summary table with aggregated statistics
-    print("\nUpdating athlete flags in warehouse...")
     update_athletes_summary()
 
-    # Check for duplicate athletes and prompt to merge (only check current athletes)
     if processed_athlete_uuids:
-        print(f"\nChecking {len(processed_athlete_uuids)} newly processed athlete(s) for similar names...")
         try:
             conn = get_warehouse_connection()
-            check_and_merge_duplicates(conn=conn, athlete_uuids=processed_athlete_uuids, min_similarity=0.80)
+            check_and_merge_duplicates(conn=conn, athlete_uuids=processed_athlete_uuids)
             conn.close()
         except Exception as e:
             print(f"Warning: Could not check for duplicates: {str(e)}")
-            import traceback
-            traceback.print_exc()
     else:
-        print("\nNo athletes processed, skipping duplicate check.")
+        print("Warning: No athletes processed.")
 
-    # Generate report
-    print("\nGenerating PDF report...")
     generate_movement_report()
 
-    print("\n" + "=" * 80)
-    print("Analysis complete!")
-    print("=" * 80)
-    print("\nData has been saved to:")
-    print("  - Warehouse table: public.f_arm_action")
-    print("  - Athlete flags updated in: analytics.d_athletes")
-    print("\nUse 'python checkDatabase.py' to view current database status.")
+    if processed_athlete_uuids:
+        print("Successful run and upload.")

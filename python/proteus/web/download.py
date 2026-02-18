@@ -26,8 +26,8 @@ def navigate_to_export_page(page: Page) -> bool:
     
     logger.info(f"Navigating to data export page: {export_url}")
     try:
-        page.goto(export_url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(2000)  # Wait for page to settle
+        page.goto(export_url, wait_until="domcontentloaded", timeout=120000)
+        page.wait_for_timeout(3000)  # Wait for page to settle
         
         # Check if we're on the right page
         current_url = page.url
@@ -93,9 +93,12 @@ def set_date_range(page: Page, start_date: date, end_date: date) -> bool:
                 except:
                     continue
         
-        # Try to find Start Date and End Date fields
-        # Common patterns: label text, placeholder, name, id
+        # Try to find Start Date and End Date fields (skip checkboxes - they can match name*="end" etc.)
+        def is_fillable_date_input(el):
+            return el and el.get_attribute("type") != "checkbox"
+
         start_date_selectors = [
+            'input[type="date"]',
             'input[placeholder*="Start Date" i]',
             'input[name*="start" i]',
             'input[id*="start" i]',
@@ -103,8 +106,9 @@ def set_date_range(page: Page, start_date: date, end_date: date) -> bool:
             'label:has-text("Start Date") + input',
             'label:has-text("Start") + input',
         ]
-        
+
         end_date_selectors = [
+            'input[type="date"]',
             'input[placeholder*="End Date" i]',
             'input[name*="end" i]',
             'input[id*="end" i]',
@@ -112,30 +116,28 @@ def set_date_range(page: Page, start_date: date, end_date: date) -> bool:
             'label:has-text("End Date") + input',
             'label:has-text("End") + input',
         ]
-        
+
         start_input = None
         end_input = None
-        
-        # Find start date field
+
         for selector in start_date_selectors:
             try:
                 element = page.query_selector(selector)
-                if element:
+                if element and is_fillable_date_input(element):
                     start_input = element
                     logger.info(f"Found start date field with selector: {selector}")
                     break
-            except:
+            except Exception:
                 continue
-        
-        # Find end date field
+
         for selector in end_date_selectors:
             try:
                 element = page.query_selector(selector)
-                if element:
+                if element and is_fillable_date_input(element) and element != start_input:
                     end_input = element
                     logger.info(f"Found end date field with selector: {selector}")
                     break
-            except:
+            except Exception:
                 continue
         
         if start_input and end_input:

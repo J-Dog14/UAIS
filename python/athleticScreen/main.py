@@ -17,11 +17,19 @@ if str(python_dir) not in sys.path:
     sys.path.insert(0, str(python_dir))
 
 from common.config import get_raw_paths
-from common.athlete_manager import get_warehouse_connection, get_or_create_athlete
+from common.athlete_manager import (
+    get_warehouse_connection,
+    get_or_create_athlete,
+    update_athlete_in_warehouse,
+    merge_by_email,
+    normalize_email,
+    normalize_name_for_matching,
+)
 from common.athlete_matcher import update_athlete_data_flag
 from common.athlete_utils import extract_source_athlete_id
 from common.duplicate_detector import check_and_merge_duplicates
-from common.session_xml import get_dob_from_session_xml_next_to_file
+from common.session_duplicate_prompt import session_exists, prompt_duplicate_session
+from common.session_xml import get_dob_from_session_xml_next_to_file, parse_email_from_session_xml
 from file_parsers import parse_movement_file
 from power_analysis import load_power_txt, analyze_power_curve_advanced
 
@@ -92,7 +100,6 @@ def run_report_generation(athletes_to_report, folder_path):
         logo_path = None
     for athlete_uuid, (name, date_str) in athletes_to_report.items():
         try:
-            print(f"   Generating PDF report for {name} ({date_str})...")
             report_path = generate_pdf_report(
                 athlete_uuid=athlete_uuid,
                 athlete_name=name,
@@ -102,19 +109,17 @@ def run_report_generation(athletes_to_report, folder_path):
                 power_files_dir=folder_path,
             )
             if report_path:
-                print(f"   ✓ PDF report generated: {report_path}")
                 try:
                     clean_name = name.replace(' ', '_').replace(',', '')
                     report_filename = f"{clean_name}_{date_str}_report.pdf"
                     report_path_2 = os.path.join(reports_dir_2, report_filename)
                     shutil.copy2(report_path, report_path_2)
-                    print(f"   ✓ PDF report copied to: {report_path_2}")
                 except Exception as copy_error:
-                    print(f"   Warning: Could not copy report to second location: {copy_error}")
+                    print(f"Warning: Could not copy report to second location: {copy_error}")
             else:
-                print(f"   ✗ Failed to generate PDF report for {name}")
+                print(f"Warning: Failed to generate PDF report for {name}")
         except Exception as e:
-            print(f"   Warning: Could not generate PDF report for {name}: {e}")
+            print(f"Warning: Could not generate PDF report for {name}: {e}")
             import traceback
             traceback.print_exc()
 
@@ -186,10 +191,8 @@ def _process_txt_files_dry_run(folder_path: str, txt_files: list) -> list:
     errors = []
     for file_path in txt_files:
         file_name = os.path.basename(file_path)
-        print(f"\n  {file_name}")
         parsed_data = parse_movement_file(file_path, folder_path)
         if not parsed_data:
-            print(f"     Skip: failed to parse")
             errors.append(file_path)
             continue
         name = parsed_data.get("name")
@@ -197,30 +200,16 @@ def _process_txt_files_dry_run(folder_path: str, txt_files: list) -> list:
         movement_type = parsed_data.get("movement_type")
         source_path = parsed_data.get("source_path")
         if not name or not date_str or not movement_type:
-            print(f"     Skip: missing name/date/movement_type")
             errors.append(file_path)
             continue
-        date_of_birth = get_dob_from_session_xml_next_to_file(source_path) if source_path else None
-        print(f"     Name: {name}")
-        print(f"     Date: {date_str}  |  Movement: {movement_type}")
-        print(f"     Source path: {source_path or '(none)'}")
-        print(f"     DOB from session.xml: {date_of_birth or '(not found)'}")
         athlete_key = (name, date_str)
-        if athlete_key not in seen_athletes:
-            seen_athletes.add(athlete_key)
-            print(f"     -> Would create/update athlete in warehouse")
-        pg_table = MOVEMENT_TO_PG_TABLE.get(movement_type, "?")
-        print(f"     -> Would upsert row into public.{pg_table}")
+        seen_athletes.add(athlete_key)
         processed.append((name, "(dry-run)", file_name))
-    print("\n" + "-" * 60)
-    print(f"DRY RUN SUMMARY: {len(processed)} file(s) would be processed, {len(seen_athletes)} unique athlete(s)")
-    if errors:
-        print(f"  Skipped/errors: {len(errors)}")
-    print("-" * 60)
+    print(f"DRY RUN: {len(processed)} file(s) would be processed, {len(seen_athletes)} unique athlete(s)" + (f"; {len(errors)} skipped/errors" if errors else ""))
     return processed
 
 
-def process_txt_files(folder_path: str, dry_run: bool = False):
+def process_txt_files(folder_path: str, dry_run: bool = False, athlete_uuid: str = None, profile: dict = None):
     """
     Process all txt files from folder and insert into PostgreSQL.
     Extracts name and date from first line of each txt file.
@@ -228,16 +217,15 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
     Args:
         folder_path: Path to directory containing txt files (e.g., 'D:/Athletic Screen 2.0/Output Files/')
         dry_run: If True, only parse and print what would be done; no DB writes, no file moves.
+        athlete_uuid: Optional. When provided (e.g. Existing Athlete from Octane), use this UUID for all
+            inserts and do not create a new athlete. Profile is only filled for missing fields.
+        profile: Optional dict of existing profile fields (date_of_birth, height, weight, etc.); only
+            missing fields are filled from session.xml.
 
     Returns:
         List of tuples (athlete_name, athlete_uuid) for processed files (uuid is placeholder in dry_run).
     """
-    print("=" * 60)
-    print("Athletic Screen Data Processing to PostgreSQL")
-    if dry_run:
-        print("  [DRY RUN - no database writes, no file moves]")
-    print("=" * 60)
-    print(f"\nScanning directory: {folder_path}")
+    print("Athletic Screen" + (" [DRY RUN]" if dry_run else ""))
 
     if not os.path.exists(folder_path):
         raise ValueError(f"Directory not found: {folder_path}")
@@ -257,17 +245,17 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
         print("No txt files found in directory.")
         return []
 
-    print(f"Found {len(txt_files)} txt files to process")
+    print(f"Processing {len(txt_files)} files")
 
     if dry_run:
         return _process_txt_files_dry_run(folder_path, txt_files)
 
-    # Connect to PostgreSQL
-    print("Connecting to PostgreSQL warehouse...")
     pg_conn = get_warehouse_connection()
     
     # Process each txt file
     processed_athletes = {}  # Track athletes by (name, date) -> athlete_uuid
+    duplicate_session_prompted = set()  # (athlete_uuid, date_str) already prompted and user said yes
+    duplicate_session_skip = set()  # (athlete_uuid, date_str) user said no - skip all files for this session
     processed = []
     errors = []
     inserted_count = 0
@@ -278,7 +266,6 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
         savepoint_created = False
         try:
             file_name = os.path.basename(file_path)
-            print(f"\nProcessing: {file_name}")
             
             # Create a savepoint for this file
             with pg_conn.cursor() as sp_cur:
@@ -289,7 +276,7 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
             parsed_data = parse_movement_file(file_path, folder_path)
             
             if not parsed_data:
-                print(f"   Skipping {file_name} - failed to parse")
+                print(f"Warning: Skipping {file_name} - failed to parse")
                 errors.append(f"{file_path}: Failed to parse")
                 continue
             
@@ -298,35 +285,55 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
             movement_type = parsed_data.get('movement_type')
             
             if not name or not date_str or not movement_type:
-                print(f"   Skipping {file_name} - missing required data")
+                print(f"Warning: Skipping {file_name} - missing required data")
                 errors.append(f"{file_path}: Missing required data")
                 continue
             
             athlete_key = (name, date_str)
             
-            print(f"   Extracted: {name} ({date_str}) - {movement_type}")
-            
-            # Get or create athlete in PostgreSQL (with name cleaning and source ID extraction)
+            # Get or create athlete (or use provided athlete_uuid when running for Existing Athlete)
             if athlete_key not in processed_athletes:
                 try:
-                    # Extract source_athlete_id (initials if present, otherwise cleaned name)
-                    source_athlete_id = extract_source_athlete_id(name)
-                    # DOB from session.xml in the session folder (first line of txt has path to .c3d; session.xml is same folder)
-                    date_of_birth = get_dob_from_session_xml_next_to_file(parsed_data.get("source_path")) if parsed_data.get("source_path") else None
+                    if athlete_uuid:
+                        # Existing-athlete flow: use provided UUID; only fill missing profile from session.xml
+                        source_path = parsed_data.get("source_path")
+                        date_of_birth = get_dob_from_session_xml_next_to_file(source_path) if source_path else None
+                        session_xml_path = (Path(source_path).parent / "session.xml") if source_path else None
+                        email = parse_email_from_session_xml(session_xml_path) if session_xml_path and Path(session_xml_path).exists() else None
+                        norm_email = normalize_email(email)
+                        profile_updates = {}
+                        if date_of_birth and (not profile or not profile.get("date_of_birth")):
+                            profile_updates["date_of_birth"] = date_of_birth
+                        if norm_email:
+                            profile_updates["email"] = norm_email
+                        if profile_updates:
+                            update_athlete_in_warehouse(athlete_uuid, conn=pg_conn, **profile_updates)
+                        processed_athletes[athlete_key] = athlete_uuid
+                        print(f"Athlete: {name}")
+                        print("Successful match with athlete in DB")
+                    else:
+                        source_athlete_id = extract_source_athlete_id(name)
+                        source_path = parsed_data.get("source_path")
+                        date_of_birth = get_dob_from_session_xml_next_to_file(source_path) if source_path else None
+                        session_xml_path = (Path(source_path).parent / "session.xml") if source_path else None
+                        email = parse_email_from_session_xml(session_xml_path) if session_xml_path and Path(session_xml_path).exists() else None
+                        normalized_email = normalize_email(email) if email else None
 
-                    athlete_uuid = get_or_create_athlete(
-                        name=name,  # Will be cleaned by get_or_create_athlete (removes dates, initials, etc.)
-                        date_of_birth=date_of_birth,
-                        source_system="athletic_screen",
-                        source_athlete_id=source_athlete_id
-                    )
-                    processed_athletes[athlete_key] = athlete_uuid
-                    print(f"   Got/created athlete UUID: {athlete_uuid}")
-                    
-                    # Update data flag immediately
-                    update_athlete_data_flag(pg_conn, athlete_uuid, "athletic_screen", has_data=True)
+                        athlete_uuid, created = get_or_create_athlete(
+                            name=name,
+                            date_of_birth=date_of_birth,
+                            email=normalized_email,
+                            source_system="athletic_screen",
+                            source_athlete_id=source_athlete_id,
+                        )
+                        if normalized_email:
+                            athlete_uuid = merge_by_email(normalized_email, pg_conn) or athlete_uuid
+                        processed_athletes[athlete_key] = athlete_uuid
+                        print(f"Athlete: {name}")
+                        print("New athlete profile created" if created else "Successful match with athlete in DB")
+                    update_athlete_data_flag(pg_conn, processed_athletes[athlete_key], "athletic_screen", has_data=True)
                 except Exception as e:
-                    print(f"   Error getting athlete UUID: {str(e)}")
+                    print(f"Error: {str(e)}")
                     import traceback
                     traceback.print_exc()
                     errors.append(f"{file_path}: Failed to get athlete UUID - {str(e)}")
@@ -361,7 +368,7 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
             # Map to PostgreSQL table
             pg_table = MOVEMENT_TO_PG_TABLE.get(movement_type)
             if not pg_table:
-                print(f"   Warning: No PostgreSQL table mapping for {movement_type}")
+                print(f"Warning: No PostgreSQL table mapping for {movement_type}")
                 errors.append(f"{file_path}: Unknown movement type {movement_type}")
                 continue
             
@@ -407,9 +414,9 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
                             'kurtosis': _safe_convert_to_python_type(power_analysis.get('kurtosis')),
                             'spectral_centroid_hz': _safe_convert_to_python_type(power_analysis.get('spectral_centroid_hz')),
                         }
-                        print(f"   ✓ Loaded power analysis from {os.path.basename(power_file)}")
+                        pass
                     except Exception as e:
-                        print(f"   Warning: Could not analyze power file {os.path.basename(power_file)}: {e}")
+                        print(f"Warning: Could not analyze power file {os.path.basename(power_file)}: {e}")
                         import traceback
                         traceback.print_exc()
                         # Continue without power metrics
@@ -506,9 +513,22 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
                               'age_at_collection', 'age_group']
             else:
                 # Unknown movement type - should not reach here if pg_table check worked
-                print(f"   Warning: Unhandled movement type {movement_type}")
+                print(f"Warning: Unhandled movement type {movement_type}")
                 errors.append(f"{file_path}: Unhandled movement type {movement_type}")
                 continue
+            
+            # Safeguard 4 (Existing Athlete): prompt before overwriting existing session
+            if athlete_uuid:
+                key = (athlete_uuid, date_str)
+                if key in duplicate_session_skip:
+                    continue
+                if key not in duplicate_session_prompted:
+                    if session_exists(pg_conn, "f_athletic_screen_cmj", athlete_uuid, date_str):
+                        if not prompt_duplicate_session(date_str):
+                            duplicate_session_skip.add(key)
+                            errors.append(f"{file_path}: User chose not to overwrite existing session {date_str}")
+                            continue
+                        duplicate_session_prompted.add(key)
             
             # UPSERT: Check if row exists, then update or insert
             with pg_conn.cursor() as cur:
@@ -544,7 +564,6 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
                         WHERE {where_clause}
                     """, update_values)
                     updated_count += 1
-                    print(f"   ✓ Updated {movement_type} data")
                 else:
                     # Insert new row
                     cols = list(insert_data.keys())
@@ -559,7 +578,6 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
                         VALUES ({placeholders})
                     """, values)
                     inserted_count += 1
-                    print(f"   ✓ Inserted {movement_type} data")
                 
                 # Commit the transaction (this automatically releases all savepoints)
                 pg_conn.commit()
@@ -586,7 +604,6 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
                     
                     # Move the main txt file
                     shutil.move(file_path, dest_path)
-                    print(f"   ✓ Moved to: {os.path.basename(dest_path)}")
                     
                     # Also move the corresponding Power.txt file if it exists
                     trial_name = parsed_data.get('trial_name')
@@ -632,11 +649,10 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
                                 
                                 # Move the Power.txt file
                                 shutil.move(power_file, power_dest_path)
-                                print(f"   ✓ Moved Power file to: {os.path.basename(power_dest_path)}")
                             except Exception as power_move_error:
-                                print(f"   Warning: Could not move Power file: {power_move_error}")
+                                print(f"Warning: Could not move Power file: {power_move_error}")
                 except Exception as move_error:
-                    print(f"   Warning: Could not move file to processed directory: {move_error}")
+                    print(f"Warning: Could not move file to processed directory: {move_error}")
                     # Continue - file processing was successful even if move failed
             
             if athlete_key not in [p[0:2] for p in processed]:
@@ -664,31 +680,28 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
             
             error_msg = f"{file_path}: {str(e)}"
             errors.append(error_msg)
-            print(f"   ✗ Error: {str(e)}")
+            print(f"Error: {str(e)}")
             import traceback
             traceback.print_exc()
     
     pg_conn.close()
     
     # Update athlete flags for all successfully processed athletes
-    print("\nUpdating athlete data flags...")
     try:
         pg_conn = get_warehouse_connection()
         for _, athlete_uuid, _ in processed:
             update_athlete_data_flag(pg_conn, athlete_uuid, "athletic_screen", has_data=True)
         pg_conn.close()
-        print("Athlete flags updated successfully")
     except Exception as e:
         print(f"Warning: Could not update athlete flags: {str(e)}")
     
     # Check for duplicate athletes and prompt to merge
     merge_map = {}
     if processed:
-        print("\nChecking for similar athlete names...")
         try:
             pg_conn = get_warehouse_connection()
             processed_uuids = [uuid for _, uuid, _ in processed]
-            result = check_and_merge_duplicates(conn=pg_conn, athlete_uuids=processed_uuids, min_similarity=0.80)
+            result = check_and_merge_duplicates(conn=pg_conn, athlete_uuids=processed_uuids)
             merge_map = result.get('merge_map', {})
             pg_conn.close()
         except Exception as e:
@@ -698,7 +711,6 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
     
     # Generate reports for all processed athletes (use canonical UUID after merge so data is found)
     if processed:
-        print("\nGenerating reports...")
         try:
             athletes_to_report = {}
             for name, athlete_uuid, date_str in processed:
@@ -715,19 +727,12 @@ def process_txt_files(folder_path: str, dry_run: bool = False):
             import traceback
             traceback.print_exc()
     
-    # Summary
-    print("\n" + "=" * 60)
-    print("Processing Summary")
-    print("=" * 60)
-    print(f"Processed: {len(processed)} athletes")
-    print(f"Inserted: {inserted_count} rows")
-    print(f"Updated: {updated_count} rows")
-    print(f"Errors: {len(errors)} files")
-    
     if errors:
-        print("\nErrors:")
         for error in errors:
-            print(f"  - {error}")
+            print(f"Error: {error}")
+    
+    if inserted_count + updated_count > 0:
+        print("Successful run and upload.")
     
     return [(name, uuid) for name, uuid, _ in processed]
 
@@ -758,9 +763,7 @@ def main():
     folder_path = os.path.abspath(folder_path)
 
     if args.report_only:
-        print("=" * 60)
-        print("Athletic Screen – report only (no data processing)")
-        print("=" * 60)
+        print("Athletic Screen – report only")
         try:
             pg_conn = get_warehouse_connection()
             athletes = get_athletes_with_athletic_screen_data(pg_conn, athlete_name_filter=args.athlete)
@@ -781,26 +784,27 @@ def main():
                 existing_date = athletes_to_report[athlete_uuid][1]
                 if date_str > existing_date:
                     athletes_to_report[athlete_uuid] = (name, date_str)
-        print(f"\nGenerating reports for {len(athletes_to_report)} athlete(s)...")
         run_report_generation(athletes_to_report, folder_path)
-        print("\n" + "=" * 60)
-        print("Report generation complete!")
-        print("=" * 60)
+        print("Report generation complete.")
         return
 
     # Processing options
     BATCH_PROCESS = True  # Process all files in directory
 
     if BATCH_PROCESS:
-        processed = process_txt_files(folder_path, dry_run=args.dry_run)
+        athlete_uuid_env = os.environ.get("ATHLETE_UUID", "").strip() or None
+        processed = process_txt_files(
+            folder_path,
+            dry_run=args.dry_run,
+            athlete_uuid=athlete_uuid_env,
+            profile=None,
+        )
 
         if not processed:
             print("No files were processed.")
             return
-
-        print("\n" + "=" * 60)
-        print("All processing complete!" if not args.dry_run else "Dry run complete.")
-        print("=" * 60)
+        if not args.dry_run:
+            print("All processing complete.")
     else:
         print("Batch processing is disabled. Set BATCH_PROCESS = True to process all files.")
 

@@ -17,6 +17,7 @@ if str(python_dir) not in sys.path:
 from common.athlete_manager import get_or_create_athlete, get_warehouse_connection
 from common.athlete_manager import normalize_name_for_matching
 from common.athlete_utils import extract_source_athlete_id
+from common.session_duplicate_prompt import session_exists, prompt_duplicate_session
 from common.session_xml import get_dob_from_session_xml_next_to_file
 from config import CAPTURE_RATE
 from parsers import parse_events_from_aPlus, parse_aplus_kinematics, parse_file_info
@@ -73,10 +74,6 @@ def clear_temp_table(conn):
     with conn.cursor() as cur:
         cur.execute(f"DELETE FROM {get_temp_table_name()}")
         conn.commit()
-        
-        cur.execute(f"SELECT COUNT(*) FROM {get_temp_table_name()}")
-        count = cur.fetchone()[0]
-        print(f"Cleared temp table. Remaining records: {count}")
 
 
 def _ingest_data_dry_run(events_dict, kinematics):
@@ -101,10 +98,10 @@ def _ingest_data_dry_run(events_dict, kinematics):
         row_count += 1
     print(f"\n  -> Would create/update {len(seen_athletes)} athlete(s), insert {row_count} row(s) into f_arm_action")
     print()
-    return []
+    return ([], [])
 
 
-def ingest_data(aPlusDataPath: str, aPlusEventsPath: str, dry_run: bool = False):
+def ingest_data(aPlusDataPath: str, aPlusEventsPath: str, dry_run: bool = False, athlete_uuid: str = None):
     """
     Ingest data into the warehouse f_arm_action table and temp table.
 
@@ -112,12 +109,15 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str, dry_run: bool = False)
         aPlusDataPath: Path to APlusData.txt file
         aPlusEventsPath: Path to aPlus_events.txt file
         dry_run: If True, only parse and print what would be done; no DB writes.
+        athlete_uuid: Optional. When provided (e.g. Existing Athlete from Octane), use this UUID
+            for all rows and do not create a new athlete.
     """
     events_dict = parse_events_from_aPlus(aPlusEventsPath, capture_rate=CAPTURE_RATE)
     kinematics = parse_aplus_kinematics(aPlusDataPath)
 
     if dry_run:
-        return _ingest_data_dry_run(events_dict, kinematics)
+        _ingest_data_dry_run(events_dict, kinematics)
+        return ([], [])
 
     conn = get_warehouse_connection()
 
@@ -130,6 +130,8 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str, dry_run: bool = False)
         temp_rows = []
         processed_athlete_uuids = set()  # Track unique athlete UUIDs processed
         athlete_dob_cache = {}  # p_name -> date_of_birth (from session.xml, once per athlete)
+        seen_athlete_names = set()
+        athlete_first_seen = []  # (name, created bool or None if provided uuid)
 
         processed_count = 0
         for row in kinematics:
@@ -164,18 +166,24 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str, dry_run: bool = False)
             if p_name not in athlete_dob_cache:
                 athlete_dob_cache[p_name] = get_dob_from_session_xml_next_to_file(fn)
 
-            # Get or create athlete in warehouse
-            # Extract source_athlete_id (initials) from name if present
-            # e.g., "Cody Yarborough CY" -> "CY", "John Smith" -> "John Smith"
+            # Use provided athlete_uuid (Existing Athlete flow) or get/create by name
             source_athlete_id = extract_source_athlete_id(p_name)
-
-            athlete_uuid = get_or_create_athlete(
-                name=p_name,  # Will be cleaned by get_or_create_athlete (removes initials, dates, etc.)
-                date_of_birth=athlete_dob_cache.get(p_name),
-                source_system="arm_action",
-                source_athlete_id=source_athlete_id  # Use extracted initials or cleaned name
-            )
-            processed_athlete_uuids.add(athlete_uuid)  # Track this athlete
+            if athlete_uuid:
+                uuid_to_use = athlete_uuid
+                if p_name not in seen_athlete_names:
+                    seen_athlete_names.add(p_name)
+                    athlete_first_seen.append((p_name, None))  # None = provided, treat as match
+            else:
+                uuid_to_use, created = get_or_create_athlete(
+                    name=p_name,
+                    date_of_birth=athlete_dob_cache.get(p_name),
+                    source_system="arm_action",
+                    source_athlete_id=source_athlete_id
+                )
+                if p_name not in seen_athlete_names:
+                    seen_athlete_names.add(p_name)
+                    athlete_first_seen.append((p_name, created))
+            processed_athlete_uuids.add(uuid_to_use)
             
             # Pull the numeric fields from row
             abd_fp = row.get("Arm_Abduction@Footplant") or 0
@@ -197,7 +205,7 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str, dry_run: bool = False)
             
             # Prepare row for warehouse
             warehouse_row = (
-                athlete_uuid,
+                uuid_to_use,
                 session_date,
                 "arm_action",  # source_system
                 source_athlete_id,  # source_athlete_id (initials if extracted)
@@ -218,7 +226,7 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str, dry_run: bool = False)
             
             # Prepare row for temp table (includes participant_name for reports)
             temp_row = (
-                athlete_uuid,
+                uuid_to_use,
                 p_name,  # participant_name (for reports)
                 session_date,
                 fn,
@@ -238,6 +246,18 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str, dry_run: bool = False)
             
             processed_count += 1
         
+        # Safeguard 4 (Existing Athlete): prompt before overwriting existing session(s)
+        if athlete_uuid and warehouse_rows:
+            unique_sessions = set((row[0], row[1]) for row in warehouse_rows)
+            skip_sessions = set()
+            for auuid, sdate in unique_sessions:
+                if session_exists(conn, "f_arm_action", auuid, sdate):
+                    if not prompt_duplicate_session(sdate):
+                        skip_sessions.add((auuid, sdate))
+            if skip_sessions:
+                warehouse_rows = [r for r in warehouse_rows if (r[0], r[1]) not in skip_sessions]
+                temp_rows = [r for r in temp_rows if (r[0], r[2]) not in skip_sessions]
+        
         # Bulk insert into warehouse
         if warehouse_rows:
             with conn.cursor() as cur:
@@ -253,7 +273,6 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str, dry_run: bool = False)
                 """
                 execute_values(cur, insert_sql, warehouse_rows)
                 conn.commit()
-                print(f"Inserted {len(warehouse_rows)} record(s) into warehouse f_arm_action table")
         
         # Bulk insert into temp table
         if temp_rows:
@@ -270,12 +289,9 @@ def ingest_data(aPlusDataPath: str, aPlusEventsPath: str, dry_run: bool = False)
                 """
                 execute_values(cur, insert_sql, temp_rows)
                 conn.commit()
-                print(f"Inserted {len(temp_rows)} record(s) into temp table")
         
-        print(f"Processed {processed_count} movement record(s)")
-        
-        # Return list of unique athlete UUIDs that were processed
-        return list(processed_athlete_uuids)
+        # Return (list of unique athlete UUIDs, list of (name, created) for first-seen athletes)
+        return (list(processed_athlete_uuids), athlete_first_seen)
         
     finally:
         conn.close()

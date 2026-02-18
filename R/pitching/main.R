@@ -55,22 +55,28 @@ if (!dir.exists(initial_dir)) {
 }
 
 # Prompt user to select a folder
-cat("\n")
-cat("=", rep("=", 80), "\n", sep = "")
-cat("PITCHING DATA PROCESSING\n")
-cat("=", rep("=", 80), "\n", sep = "")
-cat("\n")
+cat("\nPITCHING DATA PROCESSING\n\n")
 cat("Please select a folder containing pitching data to process.\n")
 cat("Default folder:", default_data_root, "\n")
 cat("\n")
 
-# Use tcltk to open folder selection dialog
+# Use tcltk to open folder selection dialog (bring to front so it isn't buried)
+# Force Tk root to exist and set topmost so the dialog appears in front of other windows
+tryCatch({
+  tcltk::tcl("wm", "attributes", ".", "-topmost", 1)
+}, error = function(e) {
+  # Root may not exist yet; one tcltk call creates it
+  tt <- tcltk::tktoplevel()
+  tcltk::tkdestroy(tt)
+  tcltk::tcl("wm", "attributes", ".", "-topmost", 1)
+})
 selected_folder <- tryCatch({
   tcltk::tk_choose.dir(
     default = initial_dir,
     caption = "Select Pitching Data Folder"
   )
 }, error = function(e) {
+  tcltk::tcl("wm", "attributes", ".", "-topmost", 0)
   cat("Error opening folder dialog:", conditionMessage(e), "\n")
   cat("Falling back to default folder:", default_data_root, "\n")
   if (dir.exists(default_data_root)) {
@@ -79,6 +85,8 @@ selected_folder <- tryCatch({
     stop("Could not select folder and default folder does not exist.")
   }
 })
+# Clear topmost so the R process doesn't stay on top after dialog closes
+tryCatch({ tcltk::tcl("wm", "attributes", ".", "-topmost", 0) }, error = function(e) { invisible(NULL) })
 
 # Check if user cancelled
 if (length(selected_folder) == 0 || is.na(selected_folder) || selected_folder == "") {
@@ -115,40 +123,23 @@ if (length(test_files) == 0) {
 }
 
 # Process the selected folder
-# Note: The processing script will search recursively within this folder
-# but will only process files within the selected folder and its subfolders
-cat("\n")
-cat("=", rep("=", 80), "\n", sep = "")
-cat("Starting processing...\n")
-cat("=", rep("=", 80), "\n", sep = "")
-cat("\n")
-
+cat("\nStarting processing...\n\n")
 start_time <- Sys.time()
 
 tryCatch({
-  # Call process_all_files with the selected folder
-  # This will process all data within the selected folder (recursively)
-  process_all_files(data_root = selected_folder)
-  
+  result <- process_all_files(data_root = selected_folder)
   end_time <- Sys.time()
   duration <- difftime(end_time, start_time, units = "secs")
-  
-  cat("\n")
-  cat("=", rep("=", 80), "\n", sep = "")
-  cat("PROCESSING COMPLETE!\n")
-  cat("=", rep("=", 80), "\n", sep = "")
-  cat("Total processing time:", round(duration, 2), "seconds (", round(duration / 60, 2), "minutes)\n")
-  cat("=", rep("=", 80), "\n", sep = "")
-  
+  rows_uploaded <- if (is.list(result) && !is.null(result$rows_uploaded)) result$rows_uploaded else 0L
+  if (rows_uploaded > 0) {
+    cat("Successful run and upload.\n")
+  }
+  cat("Processing complete. Time:", round(duration, 2), "sec\n")
 }, error = function(e) {
   end_time <- Sys.time()
   duration <- difftime(end_time, start_time, units = "secs")
-  
-  cat("\n")
-  cat("=", rep("=", 80), "\n", sep = "")
-  cat("ERROR during processing (after", round(duration, 2), "seconds):\n")
+  cat("\nERROR during processing (after", round(duration, 2), "seconds):\n")
   cat(conditionMessage(e), "\n")
-  cat("=", rep("=", 80), "\n", sep = "")
   traceback()
   stop("Processing failed")
 })
