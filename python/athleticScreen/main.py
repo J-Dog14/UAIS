@@ -292,6 +292,7 @@ def process_txt_files(folder_path: str, dry_run: bool = False, athlete_uuid: str
                             profile_updates["email"] = norm_email
                         if gender and (not profile or not profile.get("gender")):
                             profile_updates["gender"] = gender
+                        # If adding height/weight from session XML: convert to imperial first (common.units: meters_to_inches, kg_to_lbs)
                         if profile_updates:
                             update_athlete_in_warehouse(athlete_uuid, conn=pg_conn, **profile_updates)
                         processed_athletes[athlete_key] = athlete_uuid
@@ -306,6 +307,7 @@ def process_txt_files(folder_path: str, dry_run: bool = False, athlete_uuid: str
                         normalized_email = normalize_email(email) if email else None
                         raw_gender = parse_gender_from_session_xml(session_xml_path) if session_xml_path else None
                         gender = normalize_gender(raw_gender)
+                        # If adding height/weight from session XML: convert to imperial first (common.units: meters_to_inches, kg_to_lbs)
 
                         athlete_uuid, created = get_or_create_athlete(
                             name=name,

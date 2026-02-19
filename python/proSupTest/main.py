@@ -33,6 +33,7 @@ from common.athlete_utils import extract_source_athlete_id
 from common.duplicate_detector import check_and_merge_duplicates
 from common.session_duplicate_prompt import session_exists, prompt_duplicate_session
 from common.session_xml import normalize_gender
+from common.units import meters_to_inches, kg_to_lbs
 from common.db_utils import write_df
 from proSupTest.file_parsers import (
     select_folder_dialog,
@@ -371,8 +372,11 @@ def process_single_folder(folder_path: str, athlete_uuid: str = None, profile: d
         # Get or create athlete in PostgreSQL
         dob_str = xml_data.get('dob')
         gender = normalize_gender(xml_data.get('gender'))
-        height = _safe_float(xml_data.get('height'))
-        weight = _safe_float(xml_data.get('weight'))
+        # Session XML height/weight are metric (m, kg); convert to imperial for warehouse (inches, lbs)
+        height_m = _safe_float(xml_data.get('height'))
+        weight_kg = _safe_float(xml_data.get('weight'))
+        height = meters_to_inches(height_m) if height_m is not None else None
+        weight = kg_to_lbs(weight_kg) if weight_kg is not None else None
         age = xml_data.get('age')
         
         source_athlete_id = extract_source_athlete_id(athlete_name)

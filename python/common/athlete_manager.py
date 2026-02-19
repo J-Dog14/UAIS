@@ -709,16 +709,24 @@ def create_athlete_in_warehouse(
                 athlete_uuid = str(uuid.uuid4())
                 logger.info(f"Generated new UUID for {name}: {athlete_uuid}")
         
-        # Auto-calculate age and age_group from DOB if available
+        # Auto-calculate age and age_group from DOB or age_at_collection if available
         calculated_age = age
         calculated_age_group = None
-        if AGE_UTILS_AVAILABLE and date_of_birth:
+        if AGE_UTILS_AVAILABLE and age_at_collection is not None:
+            calculated_age = float(age_at_collection)
+            calculated_age_group = calculate_age_group(calculated_age)
+            logger.debug(f"Using age_at_collection: age={calculated_age:.2f}, age_group={calculated_age_group}")
+        if AGE_UTILS_AVAILABLE and date_of_birth and calculated_age_group is None:
             dob_date = parse_date(date_of_birth)
             if dob_date:
                 calculated_age = calculate_age(dob_date)
                 if calculated_age is not None:
                     calculated_age_group = calculate_age_group(calculated_age)
                     logger.debug(f"Auto-calculated age={calculated_age:.2f}, age_group={calculated_age_group} from DOB")
+        if calculated_age is None and age is not None:
+            calculated_age = age
+        if calculated_age_group is None and calculated_age is not None and AGE_UTILS_AVAILABLE:
+            calculated_age_group = calculate_age_group(calculated_age)
         # Default age_group to YOUTH for arm_action/curveball_test when DOB is missing
         if calculated_age_group is None and source_system in ("arm_action", "curveball_test"):
             calculated_age_group = "YOUTH"
@@ -951,6 +959,7 @@ def get_or_create_athlete(
     name: str,
     date_of_birth: Optional[str] = None,
     age: Optional[float] = None,
+    age_at_collection: Optional[float] = None,
     gender: Optional[str] = None,
     height: Optional[float] = None,
     weight: Optional[float] = None,

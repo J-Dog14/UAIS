@@ -79,7 +79,9 @@ log_progress <- function(...) {
   args <- list(...)
   args <- args[names(args) != "sep"]
   message <- do.call(paste0, args)
-  if (PITCHING_VERBOSE || grepl("\\[ERROR\\]|\\[WARNING\\]", message)) {
+  # Collapse to length 1 so grepl() and if() get logical(1) (avoids "length = 60 in coercion to logical(1)" when e.g. rep("=", 60) is passed)
+  if (length(message) > 1) message <- paste(message, collapse = "")
+  if (isTRUE(PITCHING_VERBOSE || grepl("\\[ERROR\\]|\\[WARNING\\]", message))) {
     cat(message, "\n", sep = "")
     flush.console()
   }
@@ -812,6 +814,7 @@ extract_metric_data <- function(doc, owner_name) {
 
 # ---------- Main processing function ----------
 process_all_files <- function(data_root = NULL) {
+  cat("[PITCH-DEBUG] 1 enter process_all_files\n"); flush.console()
   if (!PITCHING_VERBOSE) cat("Pitching processing started.\n")
   # Determine root directory
   # If data_root parameter is provided, use it; otherwise use DATA_ROOT global variable
@@ -820,7 +823,7 @@ process_all_files <- function(data_root = NULL) {
   } else if (is.null(DATA_ROOT)) {
     # Default to Pitching folder in current directory
     pitching_dir <- file.path(getwd(), "Pitching")
-    if (dir.exists(pitching_dir)) {
+    if (isTRUE(dir.exists(pitching_dir))) {
       pitching_dir
     } else {
       getwd()
@@ -828,10 +831,18 @@ process_all_files <- function(data_root = NULL) {
   } else {
     DATA_ROOT
   }
+  cat("[PITCH-DEBUG] 2 root_dir set\n"); flush.console()
+  
+  # Ensure root_dir is valid (avoid "missing value where TRUE/FALSE needed": nzchar(NA) returns NA)
+  ok_root <- (length(root_dir) == 1L && is.character(root_dir) && !any(is.na(root_dir)) &&
+             nzchar(trimws(root_dir)[1L]))
+  if (!isTRUE(ok_root)) {
+    stop("Invalid data root: path is missing, NA, or empty. Please select a valid folder.")
+  }
   
   # Validate that the directory exists and is accessible
-  if (!is.null(data_root) || !is.null(DATA_ROOT)) {
-    if (!dir.exists(root_dir)) {
+  if (isTRUE(!is.null(data_root) || !is.null(DATA_ROOT))) {
+    if (!isTRUE(dir.exists(root_dir))) {
       stop("Data directory does not exist or is not accessible: ", root_dir, 
            "\nPlease check:\n",
            "  1. The path is correct\n",
@@ -857,6 +868,7 @@ process_all_files <- function(data_root = NULL) {
       log_progress("  Directory accessible, found", length(test_list), "items")
     }
   }
+  cat("[PITCH-DEBUG] 3 dir check done\n"); flush.console()
   
   log_progress("Scanning for XML files in:", root_dir)
   
@@ -922,12 +934,15 @@ process_all_files <- function(data_root = NULL) {
       stop("No XML files found in ", root_dir)
     }
   }
+  cat("[PITCH-DEBUG] 4 session files found\n"); flush.console()
   
   # Create database connection
   # Use local variable to track warehouse usage (can't modify global from function)
   use_warehouse <- USE_WAREHOUSE
+  cat("[PITCH-DEBUG] 5 use_warehouse=", as.character(use_warehouse), "\n", sep = ""); flush.console()
   
-  if (use_warehouse) {
+  if (isTRUE(use_warehouse)) {
+    cat("[PITCH-DEBUG] 6 entering warehouse branch\n"); flush.console()
     log_progress("Connecting to PostgreSQL warehouse database...")
     if (PITCHING_VERBOSE) {
       cat("\n*** ATTEMPTING WAREHOUSE CONNECTION ***\n")
@@ -936,7 +951,9 @@ process_all_files <- function(data_root = NULL) {
     }
     
     con <- tryCatch({
+      cat("[PITCH-DEBUG] 7 calling get_warehouse_connection\n"); flush.console()
       warehouse_conn <- get_warehouse_connection()
+      cat("[PITCH-DEBUG] 8 got connection, testing query\n"); flush.console()
       test_query <- tryCatch({
         DBI::dbGetQuery(warehouse_conn, "SELECT 1 as test")
         TRUE
@@ -945,7 +962,7 @@ process_all_files <- function(data_root = NULL) {
         FALSE
       })
       
-      if (!test_query) {
+      if (!isTRUE(test_query)) {
         log_progress("  [ERROR] Warehouse connection test failed")
         DBI::dbDisconnect(warehouse_conn)
         NULL
@@ -971,6 +988,7 @@ process_all_files <- function(data_root = NULL) {
       use_warehouse <<- FALSE
       NULL
     })
+    cat("[PITCH-DEBUG] 9 con assigned\n"); flush.console()
     
     if (is.null(con)) {
       if (PITCHING_VERBOSE) {
@@ -1017,6 +1035,7 @@ process_all_files <- function(data_root = NULL) {
   })
   con <- DBI::dbConnect(RSQLite::SQLite(), DB_FILE)
   }
+  cat("[PITCH-DEBUG] 10 past connection block\n"); flush.console()
   
   # Fetch athlete UUID mapping from warehouse database (not app database)
   # This is just for pre-populating the cache - athlete_manager will handle actual matching
@@ -1024,7 +1043,7 @@ process_all_files <- function(data_root = NULL) {
   log_progress("Fetching athlete UUIDs from warehouse database for pre-caching...")
   
   uuid_map <- list()  # Start empty - athlete_manager will handle matching
-  if (use_warehouse && !is.null(con)) {
+  if (isTRUE(use_warehouse) && !is.null(con)) {
     tryCatch({
       # Try to get UUIDs from warehouse d_athletes table for pre-caching
       warehouse_uuids <- DBI::dbGetQuery(con, "
@@ -1043,6 +1062,7 @@ process_all_files <- function(data_root = NULL) {
       log_progress("Could not pre-cache UUIDs from warehouse (non-critical):", conditionMessage(e))
     })
   }
+  cat("[PITCH-DEBUG] 11 uuid_map done\n"); flush.console()
   
   cat("*** UUID MAP RESULT: Contains", length(uuid_map), "entries (pre-cache) ***\n")
   log_progress("UUID map contains", length(uuid_map), "entries")
@@ -1069,8 +1089,10 @@ process_all_files <- function(data_root = NULL) {
   log_progress("=", rep("=", 60), sep = "")
   log_progress("PHASE 1: Processing", total_session_files, "session.xml files for athlete info and velocity")
   log_progress("=", rep("=", 60), sep = "")
+  cat("[PITCH-DEBUG] 12 starting Phase 1 loop\n"); flush.console()
   
   for (i in seq_along(session_files)) {
+    if (i == 1L) cat("[PITCH-DEBUG] 13 Phase 1 first iteration\n"); flush.console()
     sf <- session_files[i]
     log_progress("[", i, "/", total_session_files, "] Processing athlete info from:", basename(sf))
     doc_athlete <- tryCatch(read_xml_robust(sf), error = function(e) NULL)
@@ -1116,9 +1138,12 @@ process_all_files <- function(data_root = NULL) {
           athlete_info$uid <- athlete_uuid
           log_progress("  [WAREHOUSE] Got/created athlete UUID for", athlete_name, ":", athlete_uuid)
         }, error = function(e) {
-          log_progress("  [WARNING] Failed to get UUID from warehouse:", conditionMessage(e))
-          log_progress("  Falling back to local UUID generation")
-      athlete_info$uid <- uuid::UUIDgenerate()
+          err_msg <- conditionMessage(e)
+          log_progress("  [WARNING] Failed to get UUID from warehouse:", err_msg)
+          cat("  [ERROR] get_or_create_athlete (Python) failed:\n", err_msg, "\n", sep = "")
+          cat("  Falling back to local UUID. No data will be written for this athlete until the error above is fixed and you re-run.\n")
+          flush.console()
+          athlete_info$uid <- uuid::UUIDgenerate()
         })
       } else {
         # Fallback: Try to get UUID from app database by matching name
@@ -1189,7 +1214,7 @@ process_all_files <- function(data_root = NULL) {
   
   # Note: Athletes are now stored in analytics.d_athletes via athlete_manager
   # We still keep a local athletes table for reference if using SQLite
-  if (!use_warehouse) {
+  if (isFALSE(use_warehouse)) {
   if (length(athlete_list) > 0) {
     athletes_df <- bind_rows(athlete_list)
       log_progress("Writing athletes table to local database...")
@@ -1319,7 +1344,7 @@ process_all_files <- function(data_root = NULL) {
             for (athlete_info in athlete_list) {
               if (nrow(athlete_info) > 0) {
                 athlete_path_normalized <- normalizePath(athlete_info$source_path[1], winslash = "/", mustWork = FALSE)
-                if (athlete_path_normalized == session_xml_normalized) {
+                if (identical(athlete_path_normalized, session_xml_normalized)) {
                   found_athlete <- athlete_info
                   break
                 }
@@ -1357,7 +1382,7 @@ process_all_files <- function(data_root = NULL) {
               for (athlete_info in athlete_list) {
                 if (nrow(athlete_info) > 0) {
                   athlete_path_normalized <- normalizePath(athlete_info$source_path[1], winslash = "/", mustWork = FALSE)
-                  if (athlete_path_normalized == session_xml_normalized) {
+                  if (identical(athlete_path_normalized, session_xml_normalized)) {
                     found_athlete <- athlete_info
                     break
                   }
@@ -1422,11 +1447,12 @@ process_all_files <- function(data_root = NULL) {
               athlete_dir <- dirname(athlete_info$source_path[1])
               athlete_dir_normalized <- normalizePath(athlete_dir, winslash = "/", mustWork = FALSE)
               
-              # Calculate match score - exact match gets highest score
+              # Calculate match score - exact match gets highest score (use identical() to avoid if(NA))
               match_score <- 0
-              if (dir_path_normalized == athlete_dir_normalized) {
+              if (identical(dir_path_normalized, athlete_dir_normalized)) {
                 match_score <- 100  # Exact match
-              } else if (grepl(paste0("^", gsub("([^/])$", "\\1/", athlete_dir_normalized)), dir_path_normalized)) {
+              } else if (!is.na(athlete_dir_normalized) && !is.na(dir_path_normalized) &&
+                         grepl(paste0("^", gsub("([^/])$", "\\1/", athlete_dir_normalized)), dir_path_normalized)) {
                 match_score <- 50  # session_data.xml is in athlete's directory
           } else {
                 # Check if they share a common parent directory
@@ -1684,7 +1710,7 @@ process_all_files <- function(data_root = NULL) {
     cat("  [SUCCESS] Binding complete!\n")
     flush.console()
     
-    if (use_warehouse) {
+    if (isTRUE(use_warehouse)) {
       # Write to PostgreSQL warehouse f_kinematics_pitching table
       log_progress("  Writing metrics to warehouse f_kinematics_pitching table...")
       if (nrow(metric_df) == 0) {
@@ -1794,12 +1820,15 @@ process_all_files <- function(data_root = NULL) {
           # Coerce to plain character so bind_rows() doesn't fail on mixed "json" class
           metrics_json <- as.character(metrics_json)
           session_xml_path <- file.path(dirname(df$source_path[1]), "session.xml")
+          owner_fname <- df$owner[1]
+          handedness <- if (grepl("RH", owner_fname, ignore.case = TRUE)) "Right" else if (grepl("LH", owner_fname, ignore.case = TRUE)) "Left" else NA_character_
           trial_rows[[length(trial_rows) + 1]] <- tibble(
             idx = idx,
             athlete_uuid = uid,
             session_date = session_date,
             source_athlete_id = df$athlete_id[1],
-            owner_filename = df$owner[1],
+            owner_filename = owner_fname,
+            handedness = handedness,
             velocity_mph = df$velocity_mph[1],
             score = df$score[1],
             age_at_collection = age_at_collection,
@@ -1817,7 +1846,7 @@ process_all_files <- function(data_root = NULL) {
             arrange(.data$idx) %>%
             mutate(trial_index = row_number() - 1L) %>%
             ungroup() %>%
-            select(athlete_uuid, session_date, source_athlete_id, owner_filename, trial_index,
+            select(athlete_uuid, session_date, source_athlete_id, owner_filename, handedness, trial_index,
                    velocity_mph, score, age_at_collection, age_group, height, weight, metrics_json,
                    session_xml_path, session_data_xml_path)
           log_progress("  Built", nrow(trials_df), "trial rows for f_pitching_trials")
@@ -1833,6 +1862,7 @@ process_all_files <- function(data_root = NULL) {
                 source_system VARCHAR(50) NOT NULL DEFAULT 'pitching',
                 source_athlete_id VARCHAR(100),
                 owner_filename TEXT,
+                handedness VARCHAR(20),
                 trial_index INTEGER NOT NULL,
                 velocity_mph NUMERIC,
                 score NUMERIC,
@@ -1881,6 +1911,15 @@ process_all_files <- function(data_root = NULL) {
               DBI::dbExecute(con, "ALTER TABLE public.f_pitching_trials ADD COLUMN weight NUMERIC")
               log_progress("  Added weight to f_pitching_trials")
             }
+            if (!"handedness" %in% trials_cols) {
+              tryCatch({
+                DBI::dbExecute(con, "ALTER TABLE public.f_pitching_trials ADD COLUMN handedness \"Handedness\"")
+                log_progress("  Added handedness to f_pitching_trials")
+              }, error = function(e) {
+                DBI::dbExecute(con, "ALTER TABLE public.f_pitching_trials ADD COLUMN handedness VARCHAR(20)")
+                log_progress("  Added handedness (VARCHAR) to f_pitching_trials")
+              })
+            }
           }
           # Safeguard 4 (Existing Athlete): prompt before overwriting existing session
           skip_this_session <- FALSE
@@ -1906,16 +1945,39 @@ process_all_files <- function(data_root = NULL) {
             }
           }
           if (!skip_this_session) {
+          # Ensure all athlete_uuids exist in analytics.d_athletes (avoid FK violation if get_or_create_athlete failed in Phase 1)
+          unique_uuids_trials <- unique(as.character(trials_df$athlete_uuid))
+          uuid_check_trials <- tryCatch({
+            if (length(unique_uuids_trials) > 0) {
+              DBI::dbGetQuery(con, paste0("
+                SELECT athlete_uuid FROM analytics.d_athletes WHERE athlete_uuid IN ('", paste(unique_uuids_trials, collapse = "','"), "')
+              "))
+            } else {
+              data.frame(athlete_uuid = character(0))
+            }
+          }, error = function(e) {
+            log_progress("  [WARNING] Could not check d_athletes for trial insert:", conditionMessage(e))
+            data.frame(athlete_uuid = character(0))
+          })
+          missing_trials_uuids <- setdiff(unique_uuids_trials, uuid_check_trials$athlete_uuid)
+          if (length(missing_trials_uuids) > 0) {
+            log_progress("  [WARNING] Skipping f_pitching_trials rows for athlete_uuids not in analytics.d_athletes (FK):", paste(missing_trials_uuids, collapse = ", "))
+            cat("  [WARNING] Skipping trial rows for", length(missing_trials_uuids), "athlete UUID(s) not in d_athletes:", paste(missing_trials_uuids, collapse = ", "), "\n")
+            flush.console()
+            trials_df <- trials_df %>% filter(.data$athlete_uuid %in% uuid_check_trials$athlete_uuid)
+          }
+          if (nrow(trials_df) > 0) {
           trials_df$source_system <- "pitching"
           for (r in seq_len(nrow(trials_df))) {
             row <- trials_df[r, ]
             DBI::dbExecute(con, "
               INSERT INTO public.f_pitching_trials
-                (athlete_uuid, session_date, source_system, source_athlete_id, owner_filename, trial_index,
+                (athlete_uuid, session_date, source_system, source_athlete_id, owner_filename, handedness, trial_index,
                  velocity_mph, score, age_at_collection, age_group, height, weight, metrics, session_xml_path, session_data_xml_path)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16)
               ON CONFLICT (athlete_uuid, session_date, trial_index) DO UPDATE SET
                 owner_filename = EXCLUDED.owner_filename,
+                handedness = COALESCE(EXCLUDED.handedness, f_pitching_trials.handedness),
                 source_athlete_id = COALESCE(EXCLUDED.source_athlete_id, f_pitching_trials.source_athlete_id),
                 velocity_mph = EXCLUDED.velocity_mph,
                 score = EXCLUDED.score,
@@ -1929,12 +1991,16 @@ process_all_files <- function(data_root = NULL) {
                 created_at = NOW()
             ", params = list(
               row$athlete_uuid, row$session_date, row$source_system, row$source_athlete_id,
-              row$owner_filename, row$trial_index, row$velocity_mph, row$score,
+              row$owner_filename, if (is.na(row$handedness) || row$handedness == "") NULL else row$handedness, row$trial_index,
+              row$velocity_mph, row$score,
               row$age_at_collection, row$age_group, row$height, row$weight, row$metrics_json,
               row$session_xml_path, row$session_data_xml_path
             ))
           }
           log_progress("  [SUCCESS] Wrote", nrow(trials_df), "rows to f_pitching_trials")
+          } else {
+            log_progress("  [WARNING] No trial rows remaining after filtering for existing athletes; skipping f_pitching_trials insert.")
+          }
           }
         }
       }
@@ -1988,6 +2054,29 @@ process_all_files <- function(data_root = NULL) {
       log_progress("  Pivot complete! warehouse_df has", nrow(warehouse_df), "rows")
       cat("  [SUCCESS] Pivot complete! Final row count:", nrow(warehouse_df), "\n")
       flush.console()
+      
+      # Filter out rows whose athlete_uuid is not in analytics.d_athletes (avoid FK violation if get_or_create_athlete failed in Phase 1)
+      if (nrow(warehouse_df) > 0) {
+        unique_uuids_warehouse <- unique(as.character(warehouse_df$athlete_uuid))
+        uuid_check_warehouse <- tryCatch({
+          DBI::dbGetQuery(con, paste0("
+            SELECT athlete_uuid FROM analytics.d_athletes WHERE athlete_uuid IN ('", paste(unique_uuids_warehouse, collapse = "','"), "')
+          "))
+        }, error = function(e) {
+          log_progress("  [WARNING] Could not check d_athletes for f_kinematics_pitching:", conditionMessage(e))
+          data.frame(athlete_uuid = character(0))
+        })
+        missing_warehouse_uuids <- setdiff(unique_uuids_warehouse, uuid_check_warehouse$athlete_uuid)
+        if (length(missing_warehouse_uuids) > 0) {
+          log_progress("  [WARNING] Skipping f_kinematics_pitching rows for athlete_uuids not in analytics.d_athletes (FK):", paste(missing_warehouse_uuids, collapse = ", "))
+          cat("  [WARNING] Skipping kinematics rows for", length(missing_warehouse_uuids), "athlete UUID(s) not in d_athletes:", paste(missing_warehouse_uuids, collapse = ", "), "\n")
+          flush.console()
+          warehouse_df <- warehouse_df %>% filter(.data$athlete_uuid %in% uuid_check_warehouse$athlete_uuid)
+          if (nrow(warehouse_df) == 0) {
+            stop("No data was written: athlete(s) were not in analytics.d_athletes because get_or_create_athlete (Python) failed in Phase 1. Fix the Python/warehouse error shown above and re-run.")
+          }
+        }
+      }
       
       # Write to warehouse
       log_progress("  ===== STARTING DATABASE WRITE =====")
@@ -2357,7 +2446,7 @@ process_all_files <- function(data_root = NULL) {
     })
     }
   } else {
-    if (!use_warehouse) {
+    if (isFALSE(use_warehouse)) {
     metric_df <- tibble(
       uid = character(),
         athlete_id = character(),
@@ -2384,7 +2473,7 @@ process_all_files <- function(data_root = NULL) {
   }
   
   # Create index on athletes table (local SQLite only)
-  if (!use_warehouse && length(athlete_list) > 0) {
+  if (isFALSE(use_warehouse) && length(athlete_list) > 0) {
     log_progress("  Creating indexes on athletes table...")
     tryCatch({
       DBI::dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_athletes_uid ON athletes(uid)")
@@ -2404,7 +2493,7 @@ process_all_files <- function(data_root = NULL) {
   # Get final database info
   use_warehouse_final <- use_warehouse
   
-  if (use_warehouse_final) {
+  if (isTRUE(use_warehouse_final)) {
     if (PITCHING_VERBOSE) {
       cat("\n")
       cat("=", rep("=", 80), "\n", sep = "")
@@ -2453,9 +2542,9 @@ process_all_files <- function(data_root = NULL) {
     }
   }
   rows_uploaded <- 0L
-  if (use_warehouse_final && exists("warehouse_df") && !is.null(warehouse_df) && nrow(warehouse_df) > 0)
+  if (isTRUE(use_warehouse_final) && exists("warehouse_df") && !is.null(warehouse_df) && nrow(warehouse_df) > 0)
     rows_uploaded <- nrow(warehouse_df)
-  if (!use_warehouse_final && exists("metric_df") && !is.null(metric_df) && nrow(metric_df) > 0)
+  if (isFALSE(use_warehouse_final) && exists("metric_df") && !is.null(metric_df) && nrow(metric_df) > 0)
     rows_uploaded <- nrow(metric_df)
   return(invisible(list(rows_uploaded = rows_uploaded)))
 }

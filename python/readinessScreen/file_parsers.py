@@ -1,12 +1,18 @@
 """
 File parsing utilities for Readiness Screen.
 Handles XML and ASCII file parsing.
+Session XML height/weight are metric (m, kg); we convert to imperial (inches, lbs) for storage.
 """
 import os
 import re
 import xml.etree.ElementTree as ET
 import pandas as pd
 from typing import Optional, Dict
+
+try:
+    from common.units import meters_to_inches, kg_to_lbs
+except ImportError:
+    from python.common.units import meters_to_inches, kg_to_lbs
 
 
 # ASCII file mapping
@@ -185,11 +191,16 @@ def parse_xml_file(xml_file_path: str) -> Dict:
     if None in [name, height, weight, plyo_day, creation_date]:
         raise ValueError("Missing required data in XML file")
     
+    # Session XML provides height in m, weight in kg; convert to inches and lbs for storage
+    h_m = float(height) if height else None
+    w_kg = float(weight) if weight else None
+    height_in = meters_to_inches(h_m) if h_m is not None else None
+    weight_lb = kg_to_lbs(w_kg) if w_kg is not None else None
     return {
         'name': name,
         'gender': gender,
-        'height': float(height) if height else None,
-        'weight': float(weight) if weight else None,
+        'height': height_in,
+        'weight': weight_lb,
         'plyo_day': plyo_day,
         'creation_date': creation_date
     }

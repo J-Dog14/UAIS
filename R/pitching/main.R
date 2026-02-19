@@ -101,8 +101,8 @@ cat("\n")
 cat("Selected folder:", selected_folder, "\n")
 cat("\n")
 
-# Verify folder exists and is accessible
-if (!dir.exists(selected_folder)) {
+# Verify folder exists and is accessible (isTRUE avoids "missing value where TRUE/FALSE needed" if dir.exists returns NA)
+if (!isTRUE(dir.exists(selected_folder))) {
   stop("Selected folder does not exist or is not accessible: ", selected_folder)
 }
 
@@ -140,6 +140,7 @@ tryCatch({
   duration <- difftime(end_time, start_time, units = "secs")
   cat("\nERROR during processing (after", round(duration, 2), "seconds):\n")
   cat(conditionMessage(e), "\n")
+  cat("(Look for the last [PITCH-DEBUG] number in the output above to see how far we got.)\n")
   traceback()
   stop("Processing failed")
 })

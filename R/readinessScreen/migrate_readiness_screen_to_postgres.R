@@ -495,13 +495,23 @@ for (table_name in names(table_mapping)) {
   dob_lookup <- setNames(dob_df$date_of_birth, dob_df$athlete_uuid)
   
   # Parse Creation_Date to get session_date
-  # Creation_Date might be in various formats, including Excel serial dates
+  # Creation_Date might be in various formats, including Excel serial dates.
+  # Session dates in 1955 are usually wrong: Excel serial misinterpreted or DB returned Date in wrong century.
   parse_creation_date <- function(date_val) {
     if (is.na(date_val) || date_val == "") return(NA)
     
-    # If it's already a Date object, return it
+    # If it's already a Date object (e.g. from SQLite), check for wrong-century (1955 instead of 2025)
     if (inherits(date_val, "Date")) {
-      return(date_val)
+      if (!is.na(date_val) && date_val < as.Date("1980-01-01")) {
+        date_val <- date_val + 25567  # ~70 years so 1955 -> 2025
+      }
+      if (!is.na(date_val) && date_val >= as.Date("2000-01-01") && date_val < as.Date("2100-01-01")) {
+        return(date_val)
+      }
+      if (!is.na(date_val) && date_val >= as.Date("1980-01-01") && date_val < as.Date("2100-01-01")) {
+        return(date_val)
+      }
+      return(NA)
     }
     
     # Convert to character if needed
@@ -520,28 +530,16 @@ for (table_name in names(table_mapping)) {
     }
     
     # If string parsing failed, check if it's a numeric value (Excel serial date)
-    # Only treat as Excel serial if it's clearly a serial number
     if (grepl("^\\d+$", date_str)) {
       serial_num <- as.numeric(date_str)
-      # Excel serial dates: days since 1900-01-01
-      # Valid Excel serial dates are typically > 1 and < 100000 (covers dates up to ~2174)
-      # But dates like 20342 would be around 1955, which is wrong for 2025 dates
-      # So we need to check: if the number is > 40000, it's likely a date after 2009
-      # Excel serial for 2000-01-01 is 36526, for 2025-01-01 is around 45658
+      # Excel serial: days since 1899-12-30. Valid range typically 1..100000.
       if (serial_num >= 1 && serial_num < 100000) {
         tryCatch({
-          # Excel dates: serial number represents days since 1900-01-01
-          # Excel incorrectly counts 1900 as leap year, so we adjust
           date_obj <- as.Date(serial_num - 1, origin = "1899-12-30")
-          # Check if the date is in the wrong century (1955 instead of 2025)
-          # If the date is before 2000 but the serial number suggests it should be later,
-          # add an offset of 25316 days (approximately 70 years) to correct it
-          if (!is.na(date_obj) && date_obj < as.Date("2000-01-01") && serial_num > 20000 && serial_num < 50000) {
-            # This is likely a date that was incorrectly converted (e.g., 20342 -> 1955 instead of 2025)
-            # Add offset to get the correct year
-            date_obj <- date_obj + 25316  # ~70 years offset
+          # Wrong century: result in 1950s when serial is in 10k–50k (should be 2020s)
+          if (!is.na(date_obj) && date_obj < as.Date("2000-01-01") && serial_num > 10000 && serial_num < 50000) {
+            date_obj <- date_obj + 25567  # ~70 years
           }
-          # Only accept if it's a reasonable date (after 2000)
           if (!is.na(date_obj) && date_obj > as.Date("2000-01-01") && date_obj < as.Date("2100-01-01")) {
             return(date_obj)
           }
@@ -560,15 +558,17 @@ for (table_name in names(table_mapping)) {
     return(NA)
   }
   
-  matched_data$session_date <- sapply(matched_data$Creation_Date, parse_creation_date)
+  # Use Creation_Date from movement table, fall back to Participant_Creation_Date
+  date_col <- if ("Creation_Date" %in% names(matched_data)) "Creation_Date" else "Participant_Creation_Date"
+  matched_data$session_date <- sapply(matched_data[[date_col]], parse_creation_date)
   
   # Debug: show some date conversions
-  if (nrow(matched_data) > 0) {
-    sample_dates <- head(matched_data[!is.na(matched_data$Creation_Date), c("Creation_Date", "session_date")], 10)
+  if (nrow(matched_data) > 0 && date_col %in% names(matched_data)) {
+    sample_dates <- head(matched_data[!is.na(matched_data[[date_col]]), c(date_col, "session_date")], 10)
     if (nrow(sample_dates) > 0) {
       print("Sample date conversions:")
       for (i in 1:nrow(sample_dates)) {
-        orig_val <- sample_dates$Creation_Date[i]
+        orig_val <- sample_dates[[date_col]][i]
         parsed_date <- sample_dates$session_date[i]
         date_str <- if (inherits(parsed_date, "Date")) {
           format(parsed_date, "%Y-%m-%d")
