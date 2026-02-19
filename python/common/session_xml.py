@@ -9,6 +9,21 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+
+def normalize_gender(raw: Optional[str]) -> str:
+    """
+    Normalize a raw gender/sex value to "Male" or "Female".
+    None, empty, whitespace, "unspecified", "other", or anything not clearly Female -> "Male".
+    Only (case-insensitive) "female" or "f" -> "Female".
+    """
+    if raw is None or not str(raw).strip():
+        return "Male"
+    val = str(raw).strip().lower()
+    if val in ("female", "f"):
+        return "Female"
+    return "Male"
+
+
 # Field names to look for birth date in Subject/Fields (exact match, case-sensitive)
 _BIRTH_DATE_FIELD_NAMES = (
     "Birth_date",
@@ -196,6 +211,42 @@ def parse_email_from_session_xml(session_xml_path) -> Optional[str]:
         return None
     # Normalize: lowercase, strip
     return raw_value.lower().strip()
+
+
+def parse_gender_from_session_xml(session_xml_path) -> Optional[str]:
+    """
+    Parse session.xml and return Gender from Subject/Fields if present.
+
+    Looks for a Fields child with tag "Gender". Returns the raw string value
+    (callers should use normalize_gender() to get "Male" or "Female").
+
+    Args:
+        session_xml_path: Path to session.xml (str or Path).
+
+    Returns:
+        Raw gender string, or None if not found.
+    """
+    path = Path(session_xml_path)
+    if not path.exists():
+        return None
+    try:
+        text = _read_session_xml(path)
+        root = ET.fromstring(text)
+    except Exception:
+        return None
+
+    tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag
+    if tag != "Subject":
+        return None
+
+    for child in root:
+        ctag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if ctag == "Fields":
+            for f in child:
+                ftag = f.tag.split("}")[-1] if "}" in f.tag else f.tag
+                if ftag == "Gender" and f.text and f.text.strip():
+                    return f.text.strip()
+    return None
 
 
 def get_dob_from_session_xml_next_to_file(file_path) -> Optional[str]:

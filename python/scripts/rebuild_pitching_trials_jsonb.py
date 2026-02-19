@@ -36,6 +36,7 @@ from python.common.athlete_manager import get_warehouse_connection
 from python.common.age_utils import calculate_age_at_collection, calculate_age_group
 from python.common.path_resolution import resolve_pitching_data_path
 from python.common.session_duplicate_prompt import session_exists, prompt_duplicate_session
+from python.common.units import meters_to_inches, kg_to_lbs
 
 
 EXCLUDED_VARIABLE_PATTERNS = [
@@ -641,6 +642,9 @@ def main() -> int:
                 sessions_xml_parse_failed += 1
                 continue
             subject_name, subject_id, session_date, velocity_map, session_height, session_weight = parsed_sx
+            # Session XML height/weight are meters and kg; convert to inches and lbs for storage
+            height_in = meters_to_inches(session_height)
+            weight_lb = kg_to_lbs(session_weight)
             sessions_total_with_dates += 1
 
             if session_date < start_date:
@@ -691,6 +695,7 @@ def main() -> int:
                 age_at_collection = calculate_age_at_collection(session_date, dob)
                 age_group = calculate_age_group(age_at_collection) if age_at_collection is not None else None
 
+                # Score formula expects weight in kg
                 score = calculate_pitching_score_from_metrics(metrics, v, session_weight)
                 row = {
                     "athlete_uuid": athlete_uuid,
@@ -704,8 +709,8 @@ def main() -> int:
                     "score": score,
                     "age_at_collection": float(age_at_collection) if age_at_collection is not None else None,
                     "age_group": age_group,
-                    "height": session_height,
-                    "weight": session_weight,
+                    "height": height_in,
+                    "weight": weight_lb,
                     "metrics": metrics,
                     "session_xml_path": str(session_xml_path),
                     "session_data_xml_path": str(session_data_xml_path),

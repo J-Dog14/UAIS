@@ -21,11 +21,18 @@ python_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(python_dir))
 
 from common.config import get_raw_paths, get_warehouse_engine
-from common.athlete_manager import get_warehouse_connection, get_or_create_athlete, update_athlete_in_warehouse
+from common.age_utils import (
+    calculate_age_at_collection,
+    calculate_age_group,
+    normalize_session_date,
+    parse_date,
+)
+from common.athlete_manager import get_warehouse_connection, get_or_create_athlete, update_athlete_in_warehouse, update_athlete_age_group_from_insert
 from common.athlete_matcher import update_athlete_data_flag
 from common.athlete_utils import extract_source_athlete_id
 from common.duplicate_detector import check_and_merge_duplicates
 from common.session_duplicate_prompt import session_exists, prompt_duplicate_session
+from common.session_xml import normalize_gender
 from common.db_utils import write_df
 from proSupTest.file_parsers import (
     select_folder_dialog,
@@ -46,27 +53,6 @@ def _safe_float(value) -> Optional[float]:
         return float(value)
     except (ValueError, TypeError):
         return None
-
-
-def calculate_age_group(age_at_collection: Optional[float]) -> Optional[str]:
-    """
-    Calculate age group based on age at collection.
-    
-    Args:
-        age_at_collection: Age in years at time of collection
-        
-    Returns:
-        "High School", "College", "Pro", or None
-    """
-    if age_at_collection is None:
-        return None
-    
-    if age_at_collection < 18:
-        return "High School"
-    elif age_at_collection <= 22:
-        return "College"
-    else:
-        return "Pro"
 
 
 def generate_report_from_postgres(
@@ -384,6 +370,7 @@ def process_single_folder(folder_path: str, athlete_uuid: str = None, profile: d
     try:
         # Get or create athlete in PostgreSQL
         dob_str = xml_data.get('dob')
+        gender = normalize_gender(xml_data.get('gender'))
         height = _safe_float(xml_data.get('height'))
         weight = _safe_float(xml_data.get('weight'))
         age = xml_data.get('age')
@@ -396,6 +383,8 @@ def process_single_folder(folder_path: str, athlete_uuid: str = None, profile: d
                 updates["date_of_birth"] = dob_str
             if age is not None and (not profile or profile.get("age") is None):
                 updates["age"] = age
+            if gender and (not profile or profile.get("gender") is None):
+                updates["gender"] = gender
             if height is not None and (not profile or profile.get("height") is None):
                 updates["height"] = height
             if weight is not None and (not profile or profile.get("weight") is None):
@@ -410,6 +399,7 @@ def process_single_folder(folder_path: str, athlete_uuid: str = None, profile: d
                 source_athlete_id=source_athlete_id,
                 date_of_birth=dob_str,
                 age=age,
+                gender=gender,
                 height=height,
                 weight=weight
             )
@@ -464,15 +454,25 @@ def process_single_folder(folder_path: str, athlete_uuid: str = None, profile: d
         insert_data['cumulative_rom'] = None
         insert_data['raw_total_score'] = None
         
-        # Calculate age_at_collection and age_group
+        # Calculate age_at_collection and age_group (canonical: YOUTH, HIGH SCHOOL, COLLEGE, PRO)
         if dob_str:
             try:
-                dob_date = datetime.strptime(dob_str, "%Y-%m-%d")
-                session_date = datetime.strptime(test_date, "%Y-%m-%d")
-                age_at_collection = (session_date - dob_date).days / 365.25
-                insert_data['age_at_collection'] = age_at_collection
-                insert_data['age_group'] = calculate_age_group(age_at_collection)
-            except:
+                dob_date = parse_date(dob_str) or (datetime.strptime(dob_str, "%Y-%m-%d").date() if dob_str else None)
+                session_date = datetime.strptime(test_date, "%Y-%m-%d").date() if test_date else None
+                if dob_date and session_date:
+                    session_date = normalize_session_date(session_date)
+                    if session_date:
+                        test_date = session_date.strftime("%Y-%m-%d")
+                        insert_data['session_date'] = test_date
+                    age_at_collection = calculate_age_at_collection(session_date, dob_date)
+                    if age_at_collection is not None and (age_at_collection < 0 or age_at_collection > 120):
+                        age_at_collection = None
+                    insert_data['age_at_collection'] = age_at_collection
+                    insert_data['age_group'] = calculate_age_group(age_at_collection) if age_at_collection is not None else None
+                else:
+                    insert_data['age_at_collection'] = None
+                    insert_data['age_group'] = None
+            except Exception:
                 insert_data['age_at_collection'] = None
                 insert_data['age_group'] = None
         else:
@@ -622,6 +622,7 @@ def process_single_folder(folder_path: str, athlete_uuid: str = None, profile: d
                     SET {', '.join(set_parts)}
                     WHERE athlete_uuid = %s AND session_date = %s
                 """, update_values)
+                update_athlete_age_group_from_insert(athlete_uuid, insert_data.get('age_group'), conn=pg_conn)
                 pg_conn.commit()
             else:
                 # Insert new row - ensure column order matches table schema exactly
@@ -648,6 +649,7 @@ def process_single_folder(folder_path: str, athlete_uuid: str = None, profile: d
                     INSERT INTO public.f_pro_sup ({col_list})
                     VALUES ({placeholders})
                 """, values)
+                update_athlete_age_group_from_insert(athlete_uuid, insert_data.get('age_group'), conn=pg_conn)
                 pg_conn.commit()
         
         # Generate report

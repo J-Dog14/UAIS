@@ -9,6 +9,11 @@ This module provides functions to:
 - Update athlete information without overwriting existing data
 - Normalize names for matching
 
+Name normalization rule (period as separator):
+  Any name stored in d_athletes must treat a period like a comma: "LAST. FIRST" -> "FIRST LAST"
+  (no period in output). All writers must use normalize_name_for_display / clean_athlete_name_for_processing
+  (Python) or the equivalent R logic so "LAST, FIRST" and "LAST. FIRST" both become "FIRST LAST".
+
 Usage:
     from python.common.athlete_manager import get_or_create_athlete
     
@@ -39,6 +44,10 @@ from difflib import SequenceMatcher
 # Used by get_or_create_athlete and duplicate_detector so all pipelines resolve the same athlete.
 NAME_SIMILARITY_THRESHOLD = 0.9
 
+# Fuzzy match threshold when linking warehouse athletes to verceldb (app) by name.
+# If no exact match, return app user uuid when similarity >= this value.
+VERCELDB_FUZZY_THRESHOLD = 0.90
+
 # Configure logging to stderr by default (so stdout can be used for data output)
 # This can be overridden by callers if needed
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(levelname)s:%(name)s:%(message)s')
@@ -68,10 +77,11 @@ except ImportError:
 def normalize_name_for_display(name: str) -> str:
     """
     Convert name to "First Last" format (removes dates but keeps original case).
-    
+    Treats comma and period as last/first separator: "LAST, FIRST" and "LAST. FIRST" -> "FIRST LAST".
+
     Args:
-        name: Original name (e.g., "Weiss, Ryan 11-25" or "Crider, Carson 12-24")
-        
+        name: Original name (e.g., "Weiss, Ryan 11-25" or "Crider. Carson")
+
     Returns:
         Display name (e.g., "Ryan Weiss" or "Carson Crider")
     """
@@ -88,10 +98,16 @@ def normalize_name_for_display(name: str) -> str:
     name = re.sub(r'\s*\d{4}', '', name)
     name = name.strip()
     
-    # Convert "LAST, FIRST" to "FIRST LAST"
+    # Convert "LAST, FIRST" or "LAST. FIRST" (typo) to "FIRST LAST"
     if ',' in name:
         parts = name.split(',')
         if len(parts) == 2:
+            last = parts[0].strip()
+            first = parts[1].strip()
+            name = f"{first} {last}"
+    elif '.' in name:
+        parts = name.split('.', 1)
+        if len(parts) == 2 and parts[0].strip() and parts[1].strip():
             last = parts[0].strip()
             first = parts[1].strip()
             name = f"{first} {last}"
@@ -137,10 +153,16 @@ def normalize_name_for_matching(name: str) -> str:
     name = re.sub(r'\s*\d{4}', '', name)
     name = name.strip()
     
-    # Convert "LAST, FIRST" to "FIRST LAST"
+    # Convert "LAST, FIRST" or "LAST. FIRST" (typo) to "FIRST LAST"
     if ',' in name:
         parts = name.split(',')
         if len(parts) == 2:
+            last = parts[0].strip()
+            first = parts[1].strip()
+            name = f"{first} {last}"
+    elif '.' in name:
+        parts = name.split('.', 1)
+        if len(parts) == 2 and parts[0].strip() and parts[1].strip():
             last = parts[0].strip()
             first = parts[1].strip()
             name = f"{first} {last}"
@@ -311,17 +333,30 @@ def check_verceldb_for_uuid(normalized_name: str) -> Optional[str]:
                 conn.close()
                 return str(result['uuid'])
             
-            # Try fuzzy match - normalize all names in User table
+            # Try exact normalized match first
             cur.execute('SELECT uuid, name FROM public."User"')
             all_users = cur.fetchall()
-            
             for user in all_users:
                 user_normalized = normalize_name_for_matching(user['name'])
                 if user_normalized == normalized_name:
-                    logger.info(f"Found UUID in verceldb (fuzzy match) for {normalized_name}: {user['uuid']}")
+                    logger.info(f"Found UUID in verceldb (exact normalized match) for {normalized_name}: {user['uuid']}")
                     conn.close()
                     return str(user['uuid'])
-        
+
+            # Then try similarity threshold: return app user if best match >= VERCELDB_FUZZY_THRESHOLD
+            best_uuid = None
+            best_ratio = 0.0
+            for user in all_users:
+                user_normalized = normalize_name_for_matching(user['name'])
+                ratio = SequenceMatcher(None, normalized_name, user_normalized).ratio()
+                if ratio >= VERCELDB_FUZZY_THRESHOLD and ratio > best_ratio:
+                    best_ratio = ratio
+                    best_uuid = str(user['uuid'])
+            if best_uuid:
+                logger.info(f"Found UUID in verceldb (fuzzy match, ratio={best_ratio:.2f}) for {normalized_name}: {best_uuid}")
+                conn.close()
+                return best_uuid
+
         conn.close()
         return None
         
@@ -609,7 +644,6 @@ def create_athlete_in_warehouse(
     athlete_uuid: Optional[str] = None,
     date_of_birth: Optional[str] = None,
     age: Optional[float] = None,
-    age_at_collection: Optional[float] = None,
     gender: Optional[str] = None,
     height: Optional[float] = None,
     weight: Optional[float] = None,
@@ -633,7 +667,6 @@ def create_athlete_in_warehouse(
         athlete_uuid: UUID (generates new if not provided)
         date_of_birth: Date of birth (YYYY-MM-DD)
         age: Age
-        age_at_collection: Age at time of data collection
         gender: Gender
         height: Height
         weight: Weight
@@ -697,11 +730,11 @@ def create_athlete_in_warehouse(
             cur.execute('''
                 INSERT INTO analytics.d_athletes (
                     athlete_uuid, name, normalized_name, email,
-                    date_of_birth, age, age_at_collection, age_group,
+                    date_of_birth, age, age_group,
                     gender, height, weight, notes,
                     source_system, source_athlete_id, app_db_uuid, app_db_synced_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
                 )
                 ON CONFLICT (athlete_uuid) 
                 DO UPDATE SET
@@ -710,7 +743,6 @@ def create_athlete_in_warehouse(
                     email = COALESCE(EXCLUDED.email, analytics.d_athletes.email),
                     date_of_birth = COALESCE(EXCLUDED.date_of_birth, analytics.d_athletes.date_of_birth),
                     age = COALESCE(EXCLUDED.age, analytics.d_athletes.age),
-                    age_at_collection = COALESCE(EXCLUDED.age_at_collection, analytics.d_athletes.age_at_collection),
                     age_group = CASE 
                         WHEN EXCLUDED.date_of_birth IS NOT NULL AND EXCLUDED.date_of_birth != analytics.d_athletes.date_of_birth THEN EXCLUDED.age_group
                         WHEN EXCLUDED.age IS NOT NULL AND EXCLUDED.age != analytics.d_athletes.age THEN EXCLUDED.age_group
@@ -729,7 +761,7 @@ def create_athlete_in_warehouse(
                     END
             ''', (
                 athlete_uuid, name, normalized_name, email_norm,
-                date_of_birth, calculated_age, age_at_collection, calculated_age_group,
+                date_of_birth, calculated_age, calculated_age_group,
                 gender, height, weight, notes,
                 source_system, source_athlete_id, app_db_uuid
             ))
@@ -772,12 +804,40 @@ def create_athlete_in_warehouse(
             conn.close()
 
 
+def update_athlete_age_group_from_insert(athlete_uuid: str, age_group: Optional[str], conn=None) -> None:
+    """
+    Set d_athletes.age_group to the age_group from the most recently inserted fact row.
+    Call this after each successful insert into any fact table so the dimension reflects
+    the age_group at that assessment (not "current" age).
+
+    Args:
+        athlete_uuid: UUID of athlete
+        age_group: Canonical age group (YOUTH, HIGH SCHOOL, COLLEGE, PRO) or None to skip
+        conn: Optional database connection
+    """
+    if age_group is None:
+        return
+    close_conn = False
+    if conn is None:
+        conn = get_warehouse_connection()
+        close_conn = True
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE analytics.d_athletes
+                SET age_group = %s
+                WHERE athlete_uuid = %s
+            """, (age_group, athlete_uuid))
+    finally:
+        if close_conn:
+            conn.close()
+
+
 def update_athlete_in_warehouse(
     athlete_uuid: str,
     name: Optional[str] = None,
     date_of_birth: Optional[str] = None,
     age: Optional[float] = None,
-    age_at_collection: Optional[float] = None,
     age_group: Optional[str] = None,
     gender: Optional[str] = None,
     height: Optional[float] = None,
@@ -790,13 +850,15 @@ def update_athlete_in_warehouse(
 ) -> None:
     """
     Update athlete in warehouse (only updates non-NULL fields, doesn't overwrite existing data).
+    d_athletes.age_group is updated from fact-table inserts via update_athlete_age_group_from_insert,
+    not from "current" age when DOB is updated here.
 
     Args:
         athlete_uuid: UUID of athlete to update
         name: Full name (only updates if current value is NULL)
         date_of_birth: Date of birth (only updates if current value is NULL)
         age: Age (only updates if current value is NULL)
-        age_at_collection: Age at collection (only updates if current value is NULL)
+        age_group: Age group (only fills if current is NULL; use update_athlete_age_group_from_insert after fact insert)
         gender: Gender (only updates if current value is NULL)
         height: Height (only updates if current value is NULL)
         weight: Weight (only updates if current value is NULL)
@@ -812,24 +874,13 @@ def update_athlete_in_warehouse(
         close_conn = True
     
     try:
-        # Auto-calculate age and age_group if DOB is being updated
+        # When DOB is updated we fill age if missing; we do NOT overwrite age_group with "current" age
+        # (d_athletes.age_group = age_group of most recent insert, set via update_athlete_age_group_from_insert)
         calculated_age = age
-        calculated_age_group = None
-        dob_being_updated = date_of_birth is not None
-        
-        if AGE_UTILS_AVAILABLE:
-            # If DOB is being updated, recalculate age and age_group
-            if dob_being_updated:
-                dob_date = parse_date(date_of_birth)
-                if dob_date:
-                    calculated_age = calculate_age(dob_date)
-                    if calculated_age is not None:
-                        calculated_age_group = calculate_age_group(calculated_age)
-                        logger.debug(f"Recalculated age={calculated_age:.2f}, age_group={calculated_age_group} from DOB")
-            # If age is being updated (but not DOB), recalculate age_group
-            elif age is not None:
-                calculated_age_group = calculate_age_group(age)
-                logger.debug(f"Recalculated age_group={calculated_age_group} from age")
+        if AGE_UTILS_AVAILABLE and date_of_birth is not None and age is None:
+            dob_date = parse_date(date_of_birth)
+            if dob_date:
+                calculated_age = calculate_age(dob_date)
         
         updates = []
         params = []
@@ -849,15 +900,7 @@ def update_athlete_in_warehouse(
             updates.append("age = COALESCE(age, %s)")
             params.append(age)
         
-        if age_at_collection is not None:
-            updates.append("age_at_collection = COALESCE(age_at_collection, %s)")
-            params.append(age_at_collection)
-        
-        # Update age_group if we calculated it (only when DOB or age changes)
-        if calculated_age_group is not None:
-            updates.append("age_group = %s")
-            params.append(calculated_age_group)
-        # Optional explicit age_group (e.g. default YOUTH for arm_action/curveball when DOB missing); only set if current is NULL
+        # age_group: only fill when current is NULL (e.g. default YOUTH for arm_action/curveball)
         if age_group is not None:
             updates.append("age_group = COALESCE(age_group, %s)")
             params.append(age_group)
@@ -908,7 +951,6 @@ def get_or_create_athlete(
     name: str,
     date_of_birth: Optional[str] = None,
     age: Optional[float] = None,
-    age_at_collection: Optional[float] = None,
     gender: Optional[str] = None,
     height: Optional[float] = None,
     weight: Optional[float] = None,
@@ -937,7 +979,6 @@ def get_or_create_athlete(
         name: Full name (e.g., "Weiss, Ryan 11-25")
         date_of_birth: Date of birth (YYYY-MM-DD)
         age: Age
-        age_at_collection: Age at time of data collection
         gender: Gender
         height: Height
         weight: Weight
@@ -999,7 +1040,6 @@ def get_or_create_athlete(
                 name=display_name,  # Store as "First Last" format
                 date_of_birth=date_of_birth,
                 age=age,
-                age_at_collection=age_at_collection,
                 age_group=default_age_group,
                 gender=gender,
                 height=height,
@@ -1042,7 +1082,6 @@ def get_or_create_athlete(
             athlete_uuid=athlete_uuid,
             date_of_birth=date_of_birth,
             age=age,
-            age_at_collection=age_at_collection,
             gender=gender,
             height=height,
             weight=weight,

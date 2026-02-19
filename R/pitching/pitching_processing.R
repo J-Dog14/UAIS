@@ -58,12 +58,16 @@ find_and_source_common <- function() {
   # Source config.R
   source(config_path)
   
-  # Find and source db_utils.R in the same directory
+  # Find and source db_utils.R and units.R in the same directory
   db_utils_path <- file.path(dirname(config_path), "db_utils.R")
   if (file.exists(db_utils_path)) {
     source(db_utils_path)
   } else {
     warning("Could not find db_utils.R at: ", db_utils_path)
+  }
+  units_path <- file.path(dirname(config_path), "units.R")
+  if (file.exists(units_path)) {
+    source(units_path)
   }
 }
 
@@ -116,7 +120,7 @@ TRUNCATE_BEFORE_INSERT <- FALSE  # Set to TRUE to clear table before inserting (
 
 # ---------- Age group calculation ----------
 #' Calculate age group from age_at_collection (vectorized)
-#' Matches Python age_utils.calculate_age_group() logic
+#' Matches Python age_utils.calculate_age_group() logic (YOUTH < 14, HIGH SCHOOL 14-18, COLLEGE 18-22, PRO > 22)
 #' @param age_at_collection Age(s) at time of data collection (numeric vector)
 #' @return Age group string(s): "YOUTH", "HIGH SCHOOL", "COLLEGE", "PRO", or NA
 calculate_age_group_from_age <- function(age_at_collection) {
@@ -124,7 +128,7 @@ calculate_age_group_from_age <- function(age_at_collection) {
   not_na <- !is.na(age_at_collection)
   a <- age_at_collection[not_na]
   out[not_na] <- dplyr::case_when(
-    a < 13 ~ "YOUTH",
+    a < 14 ~ "YOUTH",
     a >= 14 & a <= 18 ~ "HIGH SCHOOL",
     a > 18 & a <= 22 ~ "COLLEGE",
     TRUE ~ "PRO"
@@ -148,10 +152,17 @@ normalize_name_for_matching <- function(name) {
   # Trim whitespace
   name <- trimws(name)
   
-  # Handle "LAST, FIRST" format - convert to "FIRST LAST"
+  # Handle "LAST, FIRST" or "LAST. FIRST" (typo) - convert to "FIRST LAST"
   if (grepl(",", name)) {
     parts <- strsplit(name, ",")[[1]]
     if (length(parts) == 2) {
+      last <- trimws(parts[1])
+      first <- trimws(parts[2])
+      name <- paste(first, last)
+    }
+  } else if (grepl(".", name, fixed = TRUE)) {
+    parts <- strsplit(name, ".", fixed = TRUE)[[1]]
+    if (length(parts) == 2 && nzchar(trimws(parts[1])) && nzchar(trimws(parts[2]))) {
       last <- trimws(parts[1])
       first <- trimws(parts[2])
       name <- paste(first, last)
@@ -369,18 +380,22 @@ extract_athlete_info <- function(path) {
   fields <- xml_find_first(root, "./Fields")
   if (inherits(fields, "xml_missing")) return(NULL)
   
-  # Core fields
+  # Core fields (Pitching/Hitting: Sex first, then Gender per session.xml)
   id <- nzchr(xml_text(xml_find_first(fields, "./ID")))
   name <- nzchr(xml_text(xml_find_first(fields, "./Name")))
   dob <- nzchr(xml_text(xml_find_first(fields, "./Date_of_birth")))
-  gender <- nzchr(xml_text(xml_find_first(fields, "./Gender")))
+  sex <- nzchr(xml_text(xml_find_first(fields, "./Sex")))
+  gender_raw <- nzchr(xml_text(xml_find_first(fields, "./Gender")))
+  # Use Sex first, then Gender; normalize: only "female"/"f" -> "Female", else "Male"
+  raw_val <- if (is.na(sex) || sex == "") gender_raw else sex
+  gender <- if (!is.na(raw_val) && tolower(trimws(raw_val)) %in% c("female", "f")) "Female" else "Male"
   height <- nzchr(xml_text(xml_find_first(fields, "./Height")))
   weight <- nzchr(xml_text(xml_find_first(fields, "./Weight")))
   creation_date <- nzchr(xml_text(xml_find_first(fields, "./Creation_date")))
   creation_time <- nzchr(xml_text(xml_find_first(fields, "./Creation_time")))
   
   # Extract all other fields (excluding core fields to avoid duplicates)
-  core_field_names <- c("ID", "Name", "Date_of_birth", "Gender", "Height", "Weight", 
+  core_field_names <- c("ID", "Name", "Date_of_birth", "Sex", "Gender", "Height", "Weight", 
                         "Creation_date", "Creation_time")
   all_fields <- xml_children(fields)
   field_list <- list()
@@ -427,6 +442,9 @@ extract_athlete_info <- function(path) {
     }, error = function(e) NULL)
   }
   
+  # Session XML height/weight are meters and kg; convert to inches and lbs for storage
+  h_m <- nznum(height)
+  w_kg <- nznum(weight)
   tibble(
     athlete_id = id,
     name = name,
@@ -434,8 +452,8 @@ extract_athlete_info <- function(path) {
     age = age,
     age_at_collection = age_at_collection,
     gender = gender,
-    height = nznum(height),
-    weight = nznum(weight),
+    height = meters_to_inches(h_m),
+    weight = kg_to_lbs(w_kg),
     creation_date = creation_date,
     creation_time = creation_time,
     source_file = basename(path),
@@ -1549,8 +1567,9 @@ process_all_files <- function(data_root = NULL) {
             flush.console()
           }
           
-          # Calculate score for this pitch (extract directly from XML)
-          weight_kg <- if (!is.null(best_match) && "weight" %in% names(best_match) && !is.na(best_match$weight[1])) as.numeric(best_match$weight[1]) else NA_real_
+          # Calculate score for this pitch; formula expects weight in kg (athlete_info$weight is stored in lbs)
+          weight_lb <- if (!is.null(best_match) && "weight" %in% names(best_match) && !is.na(best_match$weight[1])) as.numeric(best_match$weight[1]) else NA_real_
+          weight_kg <- lbs_to_kg(weight_lb)
           pitch_score <- calculate_pitching_score(doc, owner_name, velocity_mph, weight_kg)
           metric_data$score <- pitch_score
           

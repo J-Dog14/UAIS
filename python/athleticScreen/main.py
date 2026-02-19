@@ -17,10 +17,17 @@ if str(python_dir) not in sys.path:
     sys.path.insert(0, str(python_dir))
 
 from common.config import get_raw_paths
+from common.age_utils import (
+    calculate_age_at_collection,
+    calculate_age_group,
+    normalize_session_date,
+    parse_date,
+)
 from common.athlete_manager import (
     get_warehouse_connection,
     get_or_create_athlete,
     update_athlete_in_warehouse,
+    update_athlete_age_group_from_insert,
     merge_by_email,
     normalize_email,
     normalize_name_for_matching,
@@ -29,7 +36,7 @@ from common.athlete_matcher import update_athlete_data_flag
 from common.athlete_utils import extract_source_athlete_id
 from common.duplicate_detector import check_and_merge_duplicates
 from common.session_duplicate_prompt import session_exists, prompt_duplicate_session
-from common.session_xml import get_dob_from_session_xml_next_to_file, parse_email_from_session_xml
+from common.session_xml import get_dob_from_session_xml_next_to_file, parse_email_from_session_xml, parse_gender_from_session_xml, normalize_gender
 from file_parsers import parse_movement_file
 from power_analysis import load_power_txt, analyze_power_curve_advanced
 
@@ -159,31 +166,6 @@ def _safe_convert_to_python_type(val):
         return None
 
 
-def calculate_age_group(session_date, dob_date):
-    """
-    Calculate age group based on age at session date.
-
-    Args:
-        session_date: Date of the session
-        dob_date: Date of birth
-
-    Returns:
-        Age group string (U17, U19, U23, 23+) or None
-    """
-    try:
-        age = (session_date - dob_date).days / 365.25
-        if age < 17:
-            return "U17"
-        elif age < 19:
-            return "U19"
-        elif age < 23:
-            return "U23"
-        else:
-            return "23+"
-    except:
-        return None
-
-
 def _process_txt_files_dry_run(folder_path: str, txt_files: list) -> list:
     """Parse all txt files and print what would be done; no DB or file moves."""
     seen_athletes = set()  # (name, date_str)
@@ -301,11 +283,15 @@ def process_txt_files(folder_path: str, dry_run: bool = False, athlete_uuid: str
                         session_xml_path = (Path(source_path).parent / "session.xml") if source_path else None
                         email = parse_email_from_session_xml(session_xml_path) if session_xml_path and Path(session_xml_path).exists() else None
                         norm_email = normalize_email(email)
+                        raw_gender = parse_gender_from_session_xml(session_xml_path) if session_xml_path else None
+                        gender = normalize_gender(raw_gender)
                         profile_updates = {}
                         if date_of_birth and (not profile or not profile.get("date_of_birth")):
                             profile_updates["date_of_birth"] = date_of_birth
                         if norm_email:
                             profile_updates["email"] = norm_email
+                        if gender and (not profile or not profile.get("gender")):
+                            profile_updates["gender"] = gender
                         if profile_updates:
                             update_athlete_in_warehouse(athlete_uuid, conn=pg_conn, **profile_updates)
                         processed_athletes[athlete_key] = athlete_uuid
@@ -318,11 +304,14 @@ def process_txt_files(folder_path: str, dry_run: bool = False, athlete_uuid: str
                         session_xml_path = (Path(source_path).parent / "session.xml") if source_path else None
                         email = parse_email_from_session_xml(session_xml_path) if session_xml_path and Path(session_xml_path).exists() else None
                         normalized_email = normalize_email(email) if email else None
+                        raw_gender = parse_gender_from_session_xml(session_xml_path) if session_xml_path else None
+                        gender = normalize_gender(raw_gender)
 
                         athlete_uuid, created = get_or_create_athlete(
                             name=name,
                             date_of_birth=date_of_birth,
                             email=normalized_email,
+                            gender=gender,
                             source_system="athletic_screen",
                             source_athlete_id=source_athlete_id,
                         )
@@ -350,19 +339,22 @@ def process_txt_files(folder_path: str, dry_run: bool = False, athlete_uuid: str
                 result = cur.fetchone()
                 dob = result[0] if result else None
             
-            # Calculate age_at_collection and age_group
+            # Calculate age_at_collection and age_group (canonical: YOUTH, HIGH SCHOOL, COLLEGE, PRO)
             age_at_collection = None
             age_group = None
             if dob:
                 try:
                     session_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                    if isinstance(dob, str):
-                        dob_date = datetime.strptime(dob, "%Y-%m-%d").date()
-                    else:
-                        dob_date = dob
-                    age_at_collection = (session_date - dob_date).days / 365.25
-                    age_group = calculate_age_group(session_date, dob_date)
-                except:
+                    dob_date = dob if hasattr(dob, 'year') else parse_date(str(dob))
+                    if dob_date:
+                        session_date = normalize_session_date(session_date)
+                        if session_date:
+                            date_str = session_date.strftime("%Y-%m-%d")
+                        age_at_collection = calculate_age_at_collection(session_date, dob_date)
+                        if age_at_collection is not None and (age_at_collection < 0 or age_at_collection > 120):
+                            age_at_collection = None
+                        age_group = calculate_age_group(age_at_collection) if age_at_collection is not None else None
+                except Exception:
                     pass
             
             # Map to PostgreSQL table
@@ -564,6 +556,8 @@ def process_txt_files(folder_path: str, dry_run: bool = False, athlete_uuid: str
                         WHERE {where_clause}
                     """, update_values)
                     updated_count += 1
+                    # d_athletes.age_group = age_group of most recently written data
+                    update_athlete_age_group_from_insert(athlete_uuid, age_group, conn=pg_conn)
                 else:
                     # Insert new row
                     cols = list(insert_data.keys())
@@ -578,7 +572,8 @@ def process_txt_files(folder_path: str, dry_run: bool = False, athlete_uuid: str
                         VALUES ({placeholders})
                     """, values)
                     inserted_count += 1
-                
+                # d_athletes.age_group = age_group of most recently inserted data
+                update_athlete_age_group_from_insert(athlete_uuid, age_group, conn=pg_conn)
                 # Commit the transaction (this automatically releases all savepoints)
                 pg_conn.commit()
                 

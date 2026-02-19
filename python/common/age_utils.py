@@ -8,14 +8,14 @@ This module provides standardized functions for:
 - Determining age groups (YOUTH, HIGH SCHOOL, COLLEGE, PRO)
 - Standardizing age group values across all tables
 
-Age Group Definitions:
-- YOUTH: < 13 years
-- HIGH SCHOOL: 14-18 years (inclusive)
-- COLLEGE: 18-22 years (inclusive)
-- PRO: 22+ years
+Age Group Definitions (single source of truth; align with R):
+- YOUTH: age < 14
+- HIGH SCHOOL: 14 <= age <= 18
+- COLLEGE: 18 < age <= 22
+- PRO: age > 22
 
-Note: Age group is based on CURRENT age for d_athletes table.
-      Age group is based on age_at_collection for fact tables (but we don't store it there).
+d_athletes.age_group = age_group of most recently inserted data (updated on each run).
+Fact tables: age_group and age_at_collection = at assessment (session_date + DOB).
 """
 
 from typing import Optional
@@ -50,40 +50,61 @@ def calculate_age(date_of_birth: Optional[date], reference_date: Optional[date] 
 def calculate_age_at_collection(session_date: Optional[date], date_of_birth: Optional[date]) -> Optional[float]:
     """
     Calculate age at collection from session date and date of birth.
-    
+    Uses session_date as reference (age = session_date - DOB).
+
     Args:
         session_date: Date when data was collected
         date_of_birth: Athlete's date of birth
-        
+
     Returns:
         Age in years as float, or None if DOB or session_date is missing
     """
     if not date_of_birth or not session_date:
         return None
-    
+
     return calculate_age(date_of_birth, session_date)
+
+
+def normalize_session_date(session_date: Optional[date], reference_date: Optional[date] = None) -> Optional[date]:
+    """
+    If session_date is more than two years from the reference date (default today),
+    return the reference date so the run continues smoothly. Otherwise return session_date.
+
+    Plan: no flags or prompts—just correct and continue.
+    """
+    if session_date is None:
+        return None
+    if reference_date is None:
+        reference_date = date.today()
+    try:
+        delta_days = abs((session_date - reference_date).days)
+        if delta_days > 730:  # > 2 years
+            return reference_date
+        return session_date
+    except Exception:
+        return session_date
 
 
 def calculate_age_group(age: Optional[float]) -> Optional[str]:
     """
-    Calculate age group based on age.
-    
-    Age Group Definitions:
-    - YOUTH: < 13 years
-    - HIGH SCHOOL: 14-18 years (inclusive)
-    - COLLEGE: 18-22 years (inclusive)
-    - PRO: 22+ years
-    
+    Calculate age group based on age. Canonical categories only.
+
+    Bounds (documented here and mirrored in R):
+    - YOUTH: age < 14
+    - HIGH SCHOOL: 14 <= age <= 18
+    - COLLEGE: 18 < age <= 22
+    - PRO: age > 22
+
     Args:
         age: Age in years
-        
+
     Returns:
         "YOUTH", "HIGH SCHOOL", "COLLEGE", "PRO", or None
     """
     if age is None:
         return None
-    
-    if age < 13:
+
+    if age < 14:
         return "YOUTH"
     elif 14 <= age <= 18:
         return "HIGH SCHOOL"
@@ -112,7 +133,9 @@ def standardize_age_group(age_group: Optional[str]) -> Optional[str]:
     if not age_group:
         return None
     
-    age_group_upper = str(age_group).strip().upper()
+    raw = str(age_group).strip().upper()
+    # Normalize: collapse spaces for "23+", "23 +", etc.
+    age_group_upper = raw.replace(" ", "") if raw else raw
     
     # Map variations to standard values
     if age_group_upper in ("YOUTH", "Y"):
@@ -122,6 +145,15 @@ def standardize_age_group(age_group: Optional[str]) -> Optional[str]:
     elif age_group_upper in ("COLLEGE", "C"):
         return "COLLEGE"
     elif age_group_upper in ("PRO", "PROFESSIONAL", "P"):
+        return "PRO"
+    # Legacy/Pro Sup style: U13, U15, U17, U19 -> YOUTH or HIGH SCHOOL; U23 -> COLLEGE; 23+ -> PRO
+    elif age_group_upper in ("U13", "U15"):
+        return "YOUTH"
+    elif age_group_upper in ("U17", "U19"):
+        return "HIGH SCHOOL"
+    elif age_group_upper in ("U23",):
+        return "COLLEGE"
+    elif age_group_upper in ("23+",):
         return "PRO"
     else:
         # Try to parse as age and calculate group

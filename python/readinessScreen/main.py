@@ -13,7 +13,13 @@ if str(python_dir) not in sys.path:
     sys.path.insert(0, str(python_dir))
 
 from common.config import get_raw_paths
-from common.athlete_manager import get_warehouse_connection, get_or_create_athlete
+from common.age_utils import (
+    calculate_age_at_collection,
+    calculate_age_group,
+    normalize_session_date,
+    parse_date,
+)
+from common.athlete_manager import get_warehouse_connection, get_or_create_athlete, update_athlete_age_group_from_insert
 from common.athlete_matcher import update_athlete_data_flag
 from common.athlete_utils import extract_source_athlete_id
 from common.duplicate_detector import check_and_merge_duplicates
@@ -28,6 +34,7 @@ from file_parsers import (
     select_folder_dialog, ASCII_FILES
 )
 from common.session_duplicate_prompt import session_exists, prompt_duplicate_session
+from common.session_xml import normalize_gender
 from database_utils import reorder_all_tables
 from dashboard import run_dashboard
 
@@ -133,35 +140,6 @@ def process_xml_and_ascii(folder_path: str, db_path: str,
     return name, participant_id
 
 
-def calculate_age_group(session_date, date_of_birth):
-    """Calculate age group based on session_date and DOB."""
-    if not session_date or not date_of_birth:
-        return None
-    
-    try:
-        if isinstance(session_date, str):
-            session_date = datetime.strptime(session_date, "%Y-%m-%d").date()
-        if isinstance(date_of_birth, str):
-            date_of_birth = datetime.strptime(date_of_birth, "%Y-%m-%d").date()
-        
-        age = (session_date - date_of_birth).days / 365.25
-        
-        if age < 13:
-            return "U13"
-        elif age < 15:
-            return "U15"
-        elif age < 17:
-            return "U17"
-        elif age < 19:
-            return "U19"
-        elif age < 23:
-            return "U23"
-        else:
-            return "23+"
-    except:
-        return None
-
-
 def process_txt_files(output_path: str, athlete_uuid: str = None, profile: dict = None):
     """
     Process all txt files from Output Files directory and insert into PostgreSQL.
@@ -194,6 +172,16 @@ def process_txt_files(output_path: str, athlete_uuid: str = None, profile: dict 
         print("No txt files found in Output Files directory.")
         pg_conn.close()
         return []
+
+    # Parse session XML once for gender (default Male if missing)
+    session_gender = "Male"
+    xml_file_path = find_session_xml(output_path)
+    if xml_file_path:
+        try:
+            xml_data = parse_xml_file(xml_file_path)
+            session_gender = normalize_gender(xml_data.get("gender"))
+        except Exception:
+            pass
     
     print(f"Processing {len(txt_files)} files")
     
@@ -231,7 +219,8 @@ def process_txt_files(output_path: str, athlete_uuid: str = None, profile: dict 
                         athlete_uuid, created = get_or_create_athlete(
                             name=name,
                             source_system="readiness_screen",
-                            source_athlete_id=source_athlete_id
+                            source_athlete_id=source_athlete_id,
+                            gender=session_gender
                         )
                         processed_athletes[athlete_key] = athlete_uuid
                         print(f"Athlete: {name}")
@@ -255,19 +244,22 @@ def process_txt_files(output_path: str, athlete_uuid: str = None, profile: dict 
                 result = cur.fetchone()
                 dob = result[0] if result else None
             
-            # Calculate age_at_collection and age_group
+            # Calculate age_at_collection and age_group (canonical: YOUTH, HIGH SCHOOL, COLLEGE, PRO)
             age_at_collection = None
             age_group = None
             if dob:
                 try:
                     session_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                    if isinstance(dob, str):
-                        dob_date = datetime.strptime(dob, "%Y-%m-%d").date()
-                    else:
-                        dob_date = dob
-                    age_at_collection = (session_date - dob_date).days / 365.25
-                    age_group = calculate_age_group(session_date, dob_date)
-                except:
+                    dob_date = dob if hasattr(dob, 'year') else parse_date(str(dob))
+                    if dob_date:
+                        session_date = normalize_session_date(session_date)
+                        if session_date:
+                            date_str = session_date.strftime("%Y-%m-%d")
+                        age_at_collection = calculate_age_at_collection(session_date, dob_date)
+                        if age_at_collection is not None and (age_at_collection < 0 or age_at_collection > 120):
+                            age_at_collection = None
+                        age_group = calculate_age_group(age_at_collection) if age_at_collection is not None else None
+                except Exception:
                     pass
             
             # Map to PostgreSQL table
@@ -352,6 +344,7 @@ def process_txt_files(output_path: str, athlete_uuid: str = None, profile: dict 
                         WHERE athlete_uuid = %s AND session_date = %s
                     """, update_values)
                     updated_count += 1
+                    update_athlete_age_group_from_insert(athlete_uuid, age_group, conn=pg_conn)
                 else:
                     # Insert new row
                     cols = list(insert_data.keys())
@@ -364,6 +357,7 @@ def process_txt_files(output_path: str, athlete_uuid: str = None, profile: dict 
                         VALUES ({placeholders})
                     """, values)
                     inserted_count += 1
+                    update_athlete_age_group_from_insert(athlete_uuid, age_group, conn=pg_conn)
                 
                 pg_conn.commit()
             

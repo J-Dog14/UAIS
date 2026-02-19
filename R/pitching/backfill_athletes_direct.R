@@ -37,6 +37,10 @@ find_and_source_common <- function() {
   if (file.exists(db_utils_path)) {
     source(db_utils_path)
   }
+  units_path <- file.path(dirname(config_path), "units.R")
+  if (file.exists(units_path)) {
+    source(units_path)
+  }
 }
 
 find_and_source_common()
@@ -101,10 +105,17 @@ normalize_name_for_matching <- function(name) {
   # Trim whitespace
   name <- trimws(name)
   
-  # Handle "LAST, FIRST" format - convert to "FIRST LAST"
+  # Handle "LAST, FIRST" or "LAST. FIRST" (typo) - convert to "FIRST LAST"
   if (grepl(",", name)) {
     parts <- strsplit(name, ",")[[1]]
     if (length(parts) == 2) {
+      last <- trimws(parts[1])
+      first <- trimws(parts[2])
+      name <- paste(first, last)
+    }
+  } else if (grepl(".", name, fixed = TRUE)) {
+    parts <- strsplit(name, ".", fixed = TRUE)[[1]]
+    if (length(parts) == 2 && nzchar(trimws(parts[1])) && nzchar(trimws(parts[2]))) {
       last <- trimws(parts[1])
       first <- trimws(parts[2])
       name <- paste(first, last)
@@ -127,10 +138,17 @@ normalize_name_for_display <- function(name) {
   name <- gsub("\\s*\\d{4}", "", name)
   name <- trimws(name)
   
-  # Handle "LAST, FIRST" format - convert to "FIRST LAST"
+  # Handle "LAST, FIRST" or "LAST. FIRST" (typo) - convert to "FIRST LAST"
   if (grepl(",", name)) {
     parts <- strsplit(name, ",")[[1]]
     if (length(parts) == 2) {
+      last <- trimws(parts[1])
+      first <- trimws(parts[2])
+      name <- paste(first, last)
+    }
+  } else if (grepl(".", name, fixed = TRUE)) {
+    parts <- strsplit(name, ".", fixed = TRUE)[[1]]
+    if (length(parts) == 2 && nzchar(trimws(parts[1])) && nzchar(trimws(parts[2]))) {
       last <- trimws(parts[1])
       first <- trimws(parts[2])
       name <- paste(first, last)
@@ -157,7 +175,10 @@ extract_athlete_info <- function(path) {
   id <- nzchr(xml_text(xml_find_first(fields, "./ID")))
   name <- nzchr(xml_text(xml_find_first(fields, "./Name")))
   dob <- nzchr(xml_text(xml_find_first(fields, "./Date_of_birth")))
-  gender <- nzchr(xml_text(xml_find_first(fields, "./Gender")))
+  sex <- nzchr(xml_text(xml_find_first(fields, "./Sex")))
+  gender_raw <- nzchr(xml_text(xml_find_first(fields, "./Gender")))
+  raw_val <- if (is.na(sex) || sex == "") gender_raw else sex
+  gender <- if (!is.na(raw_val) && tolower(trimws(raw_val)) %in% c("female", "f")) "Female" else "Male"
   height <- nzchr(xml_text(xml_find_first(fields, "./Height")))
   weight <- nzchr(xml_text(xml_find_first(fields, "./Weight")))
   creation_date <- nzchr(xml_text(xml_find_first(fields, "./Creation_date")))
@@ -188,6 +209,9 @@ extract_athlete_info <- function(path) {
     }, error = function(e) NULL)
   }
   
+  # Session XML height/weight are meters and kg; convert to inches and lbs for storage
+  h_m <- nznum(height)
+  w_kg <- nznum(weight)
   tibble(
     athlete_id = id,
     name = name,
@@ -196,8 +220,8 @@ extract_athlete_info <- function(path) {
     age = age,
     age_at_collection = age_at_collection,
     gender = gender,
-    height = nznum(height),
-    weight = nznum(weight),
+    height = meters_to_inches(h_m),
+    weight = kg_to_lbs(w_kg),
     creation_date = creation_date,
     source_file = basename(path),
     source_path = path

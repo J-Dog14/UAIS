@@ -87,10 +87,16 @@ def clean_and_normalize_name(name: str) -> str:
     
     name = name.strip()
     
-    # Handle comma format: "LAST, FIRST" -> "FIRST LAST"
+    # Handle comma format: "LAST, FIRST" or "LAST. FIRST" (typo) -> "FIRST LAST"
     if ',' in name:
         parts = name.split(',')
         if len(parts) == 2:
+            last = parts[0].strip()
+            first = parts[1].strip()
+            name = f"{first} {last}"
+    elif '.' in name:
+        parts = name.split('.', 1)
+        if len(parts) == 2 and parts[0].strip() and parts[1].strip():
             last = parts[0].strip()
             first = parts[1].strip()
             name = f"{first} {last}"

@@ -153,7 +153,6 @@ def get_or_create_athlete_safe(
     source_athlete_id: Optional[str] = None,
     date_of_birth: Optional[str] = None,
     age: Optional[float] = None,
-    age_at_collection: Optional[float] = None,
     gender: Optional[str] = None,
     height: Optional[float] = None,
     weight: Optional[float] = None,
@@ -174,7 +173,6 @@ def get_or_create_athlete_safe(
         source_athlete_id: Original ID from source system
         date_of_birth: Date of birth (YYYY-MM-DD)
         age: Age
-        age_at_collection: Age at time of data collection
         gender: Gender
         height: Height
         weight: Weight
@@ -222,10 +220,6 @@ def get_or_create_athlete_safe(
             if age is not None and existing['age'] is None:
                 update_parts.append("age = %s")
                 update_values.append(age)
-            
-            if age_at_collection is not None and existing['age_at_collection'] is None:
-                update_parts.append("age_at_collection = %s")
-                update_values.append(age_at_collection)
             
             if gender and not existing['gender']:
                 update_parts.append("gender = %s")

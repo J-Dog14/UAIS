@@ -176,6 +176,7 @@ def parse_xml_file(xml_file_path: str) -> Dict:
         raise ValueError("Session/Fields not found in XML file")
     
     name = find_text(session_fields, "Name")
+    gender = find_text(session_fields, "Gender")
     height = find_text(session_fields, "Height")
     weight = find_text(session_fields, "Weight")
     plyo_day = find_text(session_fields, "Plyo_Day")
@@ -186,6 +187,7 @@ def parse_xml_file(xml_file_path: str) -> Dict:
     
     return {
         'name': name,
+        'gender': gender,
         'height': float(height) if height else None,
         'weight': float(weight) if weight else None,
         'plyo_day': plyo_day,

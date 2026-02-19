@@ -186,10 +186,17 @@ normalize_name_for_matching <- function(name) {
   name <- gsub("\\s*\\d{4}", "", name)
   name <- trimws(name)
   
-  # Convert "LAST, FIRST" to "FIRST LAST"
+  # Convert "LAST, FIRST" or "LAST. FIRST" (typo) to "FIRST LAST"
   if (grepl(",", name)) {
     parts <- strsplit(name, ",")[[1]]
     if (length(parts) == 2) {
+      last <- trimws(parts[1])
+      first <- trimws(parts[2])
+      name <- paste(first, last)
+    }
+  } else if (grepl(".", name, fixed = TRUE)) {
+    parts <- strsplit(name, ".", fixed = TRUE)[[1]]
+    if (length(parts) == 2 && nzchar(trimws(parts[1])) && nzchar(trimws(parts[2]))) {
       last <- trimws(parts[1])
       first <- trimws(parts[2])
       name <- paste(first, last)

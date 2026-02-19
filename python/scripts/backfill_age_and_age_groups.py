@@ -21,11 +21,14 @@ This script implements a top-down approach to age management:
    - Convert variations (youth, Youth, YOUTH) to standard format
    - Remove age_group from fact tables (only keep in d_athletes)
 
-Age Group Definitions:
-- YOUTH: < 13 years
-- HIGH SCHOOL: 14-18 years (inclusive)
-- COLLEGE: 18-22 years (inclusive)
-- PRO: 22+ years
+Age Group Definitions (canonical; see python/common/age_utils.py):
+- YOUTH: age < 14
+- HIGH SCHOOL: 14 <= age <= 18
+- COLLEGE: 18 < age <= 22
+- PRO: age > 22
+
+d_athletes.age_group = age_group of most recently inserted data (latest session_date across fact tables).
+Fact tables = age at assessment (session_date + DOB).
 
 Usage:
     python python/scripts/backfill_age_and_age_groups.py [--dry-run] [--skip-dob-backfill] [--skip-age-calculation]
@@ -54,7 +57,8 @@ from python.common.age_utils import (
     calculate_age_at_collection,
     calculate_age_group,
     standardize_age_group,
-    parse_date
+    parse_date,
+    normalize_session_date,
 )
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -68,8 +72,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# Exclude kinematics tables from backfill (optional; remove to include them again)
+FACT_TABLES_EXCLUDE = frozenset({"f_kinematics_pitching", "f_kinematics_hitting"})
+
+
 def get_fact_tables(conn) -> List[Tuple[str, str]]:
-    """Get list of all fact tables (schema, table_name)."""
+    """Get list of all fact tables (schema, table_name), excluding FACT_TABLES_EXCLUDE."""
     with conn.cursor() as cur:
         cur.execute("""
             SELECT table_schema, table_name
@@ -79,7 +87,7 @@ def get_fact_tables(conn) -> List[Tuple[str, str]]:
               AND table_name NOT LIKE '_prisma_%'
             ORDER BY table_schema, table_name
         """)
-        return [(row[0], row[1]) for row in cur.fetchall()]
+        return [(row[0], row[1]) for row in cur.fetchall() if row[1] not in FACT_TABLES_EXCLUDE]
 
 
 def table_has_column(conn, schema: str, table: str, column: str) -> bool:
@@ -127,6 +135,7 @@ def backfill_dob_from_fact_tables(conn, dry_run: bool = False) -> Dict[str, date
     
     dob_found = {}
     dob_sources = {}  # Track where DOB was found
+    source_ref = {}   # athlete_uuid -> (session_date, age_group) from table where DOB was found (for d_athletes.age_group)
     
     # Search each fact table for DOB
     for schema, table in fact_tables:
@@ -141,19 +150,33 @@ def backfill_dob_from_fact_tables(conn, dry_run: bool = False) -> Dict[str, date
         
         dob_col = "date_of_birth" if has_dob_col else "dob"
         
-        # Get unique DOB values per athlete
+        # Get unique DOB and one (session_date, age_group) per athlete for d_athletes.age_group
         athlete_uuids = tuple(a['athlete_uuid'] for a in athletes_without_dob)
         if not athlete_uuids:
             continue  # No athletes to search for
         
+        has_session = table_has_column(conn, schema, table, "session_date")
+        has_age_group = table_has_column(conn, schema, table, "age_group")
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             try:
-                cur.execute(f"""
-                    SELECT DISTINCT athlete_uuid, {dob_col} as dob_value
-                    FROM {full_table}
-                    WHERE {dob_col} IS NOT NULL
-                      AND athlete_uuid IN %s
-                """, (athlete_uuids,))
+                if has_session:
+                    cols = f"athlete_uuid, {dob_col} as dob_value, session_date"
+                    if has_age_group:
+                        cols += ", age_group"
+                    cur.execute(f"""
+                        SELECT DISTINCT ON (athlete_uuid) {cols}
+                        FROM {full_table}
+                        WHERE {dob_col} IS NOT NULL
+                          AND athlete_uuid IN %s
+                        ORDER BY athlete_uuid, session_date DESC NULLS LAST
+                    """, (athlete_uuids,))
+                else:
+                    cur.execute(f"""
+                        SELECT DISTINCT athlete_uuid, {dob_col} as dob_value
+                        FROM {full_table}
+                        WHERE {dob_col} IS NOT NULL
+                          AND athlete_uuid IN %s
+                    """, (athlete_uuids,))
                 
                 for row in cur.fetchall():
                     athlete_uuid = row['athlete_uuid']
@@ -167,6 +190,17 @@ def backfill_dob_from_fact_tables(conn, dry_run: bool = False) -> Dict[str, date
                     if dob_date:
                         dob_found[athlete_uuid] = dob_date
                         dob_sources[athlete_uuid] = full_table
+                        if has_session and row.get('session_date'):
+                            sd = row['session_date']
+                            if hasattr(sd, 'date'):
+                                sd = sd.date()
+                            if has_age_group and row.get('age_group'):
+                                ag = standardize_age_group(row['age_group']) or row['age_group']
+                                source_ref[athlete_uuid] = (sd, ag)
+                            elif sd and athlete_uuid not in source_ref:
+                                ag = calculate_age_group(calculate_age_at_collection(sd, dob_date))
+                                if ag:
+                                    source_ref[athlete_uuid] = (sd, ag)
                         logger.info(f"  Found DOB for {athlete_uuid} in {full_table}: {dob_date}")
             except Exception as e:
                 logger.warning(f"  Error searching {full_table} for DOB: {e}")
@@ -174,17 +208,29 @@ def backfill_dob_from_fact_tables(conn, dry_run: bool = False) -> Dict[str, date
     
     logger.info(f"Found DOB for {len(dob_found)} athletes")
     
-    # Update d_athletes with found DOBs
+    # Update d_athletes with found DOBs and age_group from source (cross-fill: set dimension from source that had DOB)
     if dob_found and not dry_run:
         with conn.cursor() as cur:
             for athlete_uuid, dob_date in dob_found.items():
                 try:
-                    cur.execute("""
-                        UPDATE analytics.d_athletes
-                        SET date_of_birth = %s
-                        WHERE athlete_uuid = %s
-                          AND date_of_birth IS NULL
-                    """, (dob_date, athlete_uuid))
+                    age_group_from_source = None
+                    if athlete_uuid in source_ref:
+                        _, ag = source_ref[athlete_uuid]
+                        age_group_from_source = ag
+                    if age_group_from_source:
+                        cur.execute("""
+                            UPDATE analytics.d_athletes
+                            SET date_of_birth = %s, age_group = %s
+                            WHERE athlete_uuid = %s
+                              AND date_of_birth IS NULL
+                        """, (dob_date, age_group_from_source, athlete_uuid))
+                    else:
+                        cur.execute("""
+                            UPDATE analytics.d_athletes
+                            SET date_of_birth = %s
+                            WHERE athlete_uuid = %s
+                              AND date_of_birth IS NULL
+                        """, (dob_date, athlete_uuid))
                     logger.info(f"  Updated DOB for athlete {athlete_uuid} (found in {dob_sources[athlete_uuid]})")
                 except Exception as e:
                     logger.error(f"  Error updating DOB for {athlete_uuid}: {e}")
@@ -351,153 +397,269 @@ def calculate_age_at_collection_for_tables(conn, dry_run: bool = False) -> Tuple
     return total_updated, total_skipped
 
 
-def update_d_athletes_age_and_age_group(conn, dry_run: bool = False) -> Tuple[int, int]:
+def fix_invalid_age_at_collection(conn, dry_run: bool = False) -> int:
     """
-    Update age and age_group in d_athletes based on current date and DOB.
-    
-    Returns:
-        Tuple of (rows_updated, rows_skipped)
+    Set age_at_collection and age_group to NULL where age_at_collection < 0 or > 120.
+    Returns number of rows updated across all fact tables.
     """
     logger.info("=" * 80)
-    logger.info("STEP 3: Updating age and age_group in d_athletes")
+    logger.info("STEP: Fix invalid age_at_collection (set NULL where < 0 or > 120)")
     logger.info("=" * 80)
-    
-    # Get all athletes with DOB
+    fact_tables = get_fact_tables(conn)
+    total = 0
+    for schema, table in fact_tables:
+        full_table = f"{schema}.{table}"
+        if not table_has_column(conn, schema, table, "age_at_collection"):
+            continue
+        has_age_group = table_has_column(conn, schema, table, "age_group")
+        if dry_run:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {full_table}
+                    WHERE age_at_collection IS NOT NULL
+                      AND (age_at_collection < 0 OR age_at_collection > 120)
+                """)
+                n = cur.fetchone()[0]
+            if n:
+                logger.info(f"  {full_table}: DRY RUN would fix {n} rows")
+                total += n
+            continue
+        with conn.cursor() as cur:
+            if has_age_group:
+                cur.execute(f"""
+                    UPDATE {full_table}
+                    SET age_at_collection = NULL, age_group = NULL
+                    WHERE age_at_collection IS NOT NULL
+                      AND (age_at_collection < 0 OR age_at_collection > 120)
+                """)
+            else:
+                cur.execute(f"""
+                    UPDATE {full_table}
+                    SET age_at_collection = NULL
+                    WHERE age_at_collection IS NOT NULL
+                      AND (age_at_collection < 0 OR age_at_collection > 120)
+                """)
+            n = cur.rowcount
+        conn.commit()
+        if n:
+            logger.info(f"  {full_table}: fixed {n} rows")
+            total += n
+    return total
+
+
+def update_d_athletes_age_group_from_latest_fact(conn, dry_run: bool = False) -> Tuple[int, int]:
+    """
+    Set d_athletes.age_group from the fact-table row with the latest session_date for that athlete
+    (most recently inserted data). Does not use "current" age.
+    Returns (updated, skipped).
+    """
+    logger.info("=" * 80)
+    logger.info("STEP: Set d_athletes.age_group from most recent fact row (latest session_date)")
+    logger.info("=" * 80)
+    # Build union of (athlete_uuid, session_date, age_group) from all fact tables that have these columns
+    fact_tables = get_fact_tables(conn)
+    rows_by_athlete = {}  # athlete_uuid -> (session_date, age_group) for latest
+    for schema, table in fact_tables:
+        full_table = f"{schema}.{table}"
+        if not table_has_column(conn, schema, table, "session_date") or not table_has_column(conn, schema, table, "athlete_uuid"):
+            continue
+        has_age_group = table_has_column(conn, schema, table, "age_group")
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            try:
+                if has_age_group:
+                    cur.execute(f"""
+                        SELECT athlete_uuid, session_date, age_group
+                        FROM {full_table}
+                        WHERE session_date IS NOT NULL
+                    """)
+                else:
+                    cur.execute(f"""
+                        SELECT athlete_uuid, session_date, NULL::text as age_group
+                        FROM {full_table}
+                        WHERE session_date IS NOT NULL
+                    """)
+                for row in cur.fetchall():
+                    uid = row['athlete_uuid']
+                    sd = row['session_date']
+                    if hasattr(sd, 'date'):
+                        sd = sd.date() if hasattr(sd, 'date') else sd
+                    ag = standardize_age_group(row['age_group']) if row.get('age_group') else None
+                    if uid not in rows_by_athlete or (sd and rows_by_athlete[uid][0] and sd > rows_by_athlete[uid][0]):
+                        rows_by_athlete[uid] = (sd, ag)
+            except Exception as e:
+                logger.warning(f"  {full_table}: {e}")
+                continue
+    # For athletes where we only have session_date (no age_group in fact), compute age_group from d_athletes DOB + session_date
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("""
-            SELECT athlete_uuid, name, date_of_birth, age, age_group
-            FROM analytics.d_athletes
-            WHERE date_of_birth IS NOT NULL
+            SELECT athlete_uuid, date_of_birth FROM analytics.d_athletes
         """)
-        athletes = cur.fetchall()
-    
-    logger.info(f"Found {len(athletes)} athletes with DOB")
-    
+        dob_by_athlete = {r['athlete_uuid']: r['date_of_birth'] for r in cur.fetchall()}
     updated = 0
     skipped = 0
-    
     with conn.cursor() as cur:
-        for athlete in athletes:
-            dob = athlete['date_of_birth']
-            current_age = calculate_age(dob)
-            
-            if current_age is None:
+        for athlete_uuid, (session_date, age_group) in rows_by_athlete.items():
+            if not age_group and session_date and athlete_uuid in dob_by_athlete:
+                dob = dob_by_athlete[athlete_uuid]
+                if dob:
+                    dob_d = dob.date() if hasattr(dob, 'date') else parse_date(str(dob))
+                    if dob_d:
+                        age_at_c = calculate_age_at_collection(session_date, dob_d)
+                        age_group = calculate_age_group(age_at_c) if age_at_c is not None else None
+            if not age_group:
                 skipped += 1
                 continue
-            
-            # Calculate age_group
-            age_group = calculate_age_group(current_age)
-            
-            # Standardize existing age_group if present
-            standardized_group = standardize_age_group(athlete['age_group'])
-            
-            # Only update if age changed significantly or age_group needs standardization
-            needs_update = False
-            new_age_group = age_group
-            
-            # Check if age needs updating (handle None case)
-            current_stored_age = athlete['age']
-            if current_stored_age is None:
-                needs_update = True
-            elif abs(float(current_stored_age) - current_age) > 0.1:
-                needs_update = True
-            
-            if standardized_group != age_group and standardized_group is not None:
-                # Keep standardized version if it's different from calculated
-                new_age_group = standardized_group
-                needs_update = True
-            elif age_group != athlete['age_group']:
-                needs_update = True
-            
-            if needs_update and not dry_run:
+            if not dry_run:
                 try:
                     cur.execute("""
                         UPDATE analytics.d_athletes
-                        SET age = %s,
-                            age_group = %s
+                        SET age_group = %s
                         WHERE athlete_uuid = %s
-                    """, (Decimal(str(current_age)), new_age_group, athlete['athlete_uuid']))
+                    """, (age_group, athlete_uuid))
                     updated += 1
                 except Exception as e:
-                    logger.error(f"  Error updating {athlete['athlete_uuid']}: {e}")
+                    logger.error(f"  {athlete_uuid}: {e}")
                     skipped += 1
-            elif needs_update and dry_run:
-                updated += 1
-                if updated <= 5:
-                    logger.info(f"  Would update {athlete['name']}: age={current_age:.2f}, group={new_age_group}")
             else:
-                skipped += 1
-    
+                updated += 1
     if not dry_run:
         conn.commit()
-    
     logger.info(f"Updated: {updated}, Skipped: {skipped}")
     return updated, skipped
 
 
+def update_d_athletes_age_and_age_group(conn, dry_run: bool = False) -> Tuple[int, int]:
+    """
+    Update age in d_athletes from DOB (fill if NULL). Set age_group from most recent fact row
+    via update_d_athletes_age_group_from_latest_fact (not from current age).
+    """
+    logger.info("=" * 80)
+    logger.info("STEP: Update d_athletes age (from DOB) and age_group (from latest fact)")
+    logger.info("=" * 80)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT athlete_uuid, name, date_of_birth, age
+            FROM analytics.d_athletes
+            WHERE date_of_birth IS NOT NULL
+        """)
+        athletes = cur.fetchall()
+    updated_age = 0
+    with conn.cursor() as cur:
+        for athlete in athletes:
+            dob = athlete['date_of_birth']
+            current_age = calculate_age(dob)
+            if current_age is None:
+                continue
+            cur.execute("""
+                UPDATE analytics.d_athletes
+                SET age = COALESCE(age, %s)
+                WHERE athlete_uuid = %s AND age IS NULL
+            """, (Decimal(str(current_age)), athlete['athlete_uuid']))
+            if cur.rowcount:
+                updated_age += 1
+    if not dry_run:
+        conn.commit()
+    logger.info(f"  Filled age for {updated_age} athletes where NULL")
+    return update_d_athletes_age_group_from_latest_fact(conn, dry_run=dry_run)
+
+
+def fill_fact_age_group_from_age_at_collection(conn, dry_run: bool = False) -> int:
+    """
+    Set age_group from age_at_collection where age_group IS NULL and age_at_collection IS NOT NULL.
+    Uses canonical bounds: YOUTH <14, HIGH SCHOOL 14-18, COLLEGE 18-22, PRO >22.
+    """
+    logger.info("=" * 80)
+    logger.info("STEP: Fill null age_group in fact tables from age_at_collection")
+    logger.info("=" * 80)
+    case_sql = """
+        CASE
+            WHEN age_at_collection < 14 THEN 'YOUTH'
+            WHEN age_at_collection >= 14 AND age_at_collection <= 18 THEN 'HIGH SCHOOL'
+            WHEN age_at_collection > 18 AND age_at_collection <= 22 THEN 'COLLEGE'
+            WHEN age_at_collection > 22 THEN 'PRO'
+            ELSE NULL
+        END
+    """
+    fact_tables = get_fact_tables(conn)
+    total = 0
+    for schema, table in fact_tables:
+        full_table = f"{schema}.{table}"
+        if not table_has_column(conn, schema, table, "age_group") or not table_has_column(conn, schema, table, "age_at_collection"):
+            continue
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE {full_table}
+                SET age_group = {case_sql}
+                WHERE age_group IS NULL AND age_at_collection IS NOT NULL
+                  AND age_at_collection >= 0 AND age_at_collection <= 120
+            """)
+            n = cur.rowcount
+        if not dry_run:
+            conn.commit()
+        if n:
+            logger.info(f"  {full_table}: {n} rows")
+            total += n
+    return total
+
+
 def standardize_age_groups_in_fact_tables(conn, dry_run: bool = False) -> int:
     """
-    Standardize age_group values in fact tables (if they exist).
-    Note: We're removing age_group from fact tables, but standardizing existing values first.
-    
-    Returns:
-        Number of rows updated
+    Standardize age_group values in fact tables using set-based UPDATEs (one per table).
+    Maps U13/U15/U17/U19/U23/23+, High School/College/Pro, etc. to YOUTH, HIGH SCHOOL, COLLEGE, PRO.
     """
     logger.info("=" * 80)
     logger.info("STEP 4: Standardizing age_group values (if present in fact tables)")
     logger.info("=" * 80)
-    
+    # Single UPDATE per table: CASE expression mirrors age_utils.standardize_age_group
+    case_sql = """
+        CASE
+            WHEN UPPER(TRIM(COALESCE(age_group,''))) IN ('YOUTH','Y') THEN 'YOUTH'
+            WHEN UPPER(TRIM(COALESCE(age_group,''))) IN ('HIGH SCHOOL','HIGH_SCHOOL','HS','HIGHSCHOOL') THEN 'HIGH SCHOOL'
+            WHEN UPPER(TRIM(COALESCE(age_group,''))) IN ('COLLEGE','C') THEN 'COLLEGE'
+            WHEN UPPER(TRIM(COALESCE(age_group,''))) IN ('PRO','PROFESSIONAL','P') THEN 'PRO'
+            WHEN UPPER(TRIM(REPLACE(COALESCE(age_group,''),' ',''))) IN ('U13','U15') THEN 'YOUTH'
+            WHEN UPPER(TRIM(REPLACE(COALESCE(age_group,''),' ',''))) IN ('U17','U19') THEN 'HIGH SCHOOL'
+            WHEN UPPER(TRIM(REPLACE(COALESCE(age_group,''),' ',''))) = 'U23' THEN 'COLLEGE'
+            WHEN UPPER(TRIM(REPLACE(COALESCE(age_group,''),' ',''))) = '23+' THEN 'PRO'
+            WHEN UPPER(TRIM(age_group)) = 'HIGH SCHOOL' OR TRIM(age_group) IN ('High School','High school') THEN 'HIGH SCHOOL'
+            WHEN UPPER(TRIM(age_group)) = 'COLLEGE' OR TRIM(age_group) IN ('College','college') THEN 'COLLEGE'
+            WHEN UPPER(TRIM(age_group)) = 'PRO' OR TRIM(age_group) IN ('Pro','pro') THEN 'PRO'
+            ELSE age_group
+        END
+    """
     fact_tables = get_fact_tables(conn)
     total_updated = 0
-    
     for schema, table in fact_tables:
-        full_table = f"{schema}.{table}"
-        
+        full_table = f'"{schema}"."{table}"'
         if not table_has_column(conn, schema, table, "age_group"):
             continue
-        
-        # Get rows with non-standard age_group values
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(f"""
-                SELECT id, age_group
-                FROM {full_table}
-                WHERE age_group IS NOT NULL
-            """)
-            rows = cur.fetchall()
-        
-        if not rows:
+        # Only update rows that are not already canonical
+        where_sql = """
+            age_group IS NOT NULL
+            AND age_group IS DISTINCT FROM 'YOUTH'
+            AND age_group IS DISTINCT FROM 'HIGH SCHOOL'
+            AND age_group IS DISTINCT FROM 'COLLEGE'
+            AND age_group IS DISTINCT FROM 'PRO'
+        """
+        if dry_run:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT COUNT(*) FROM {full_table} WHERE {where_sql}")
+                n = cur.fetchone()[0]
+            if n:
+                logger.info(f"  {full_table}: DRY RUN would standardize {n} rows")
+                total_updated += n
             continue
-        
-        logger.info(f"  {full_table}: Checking {len(rows)} rows")
-        
-        updated = 0
         with conn.cursor() as cur:
-            for row in rows:
-                standardized = standardize_age_group(row['age_group'])
-                
-                if standardized and standardized != row['age_group']:
-                    if not dry_run:
-                        try:
-                            cur.execute(f"""
-                                UPDATE {full_table}
-                                SET age_group = %s
-                                WHERE id = %s
-                            """, (standardized, row['id']))
-                            updated += 1
-                        except Exception as e:
-                            logger.error(f"    Error updating row {row['id']}: {e}")
-                    else:
-                        updated += 1
-                        if updated <= 3:
-                            logger.info(f"    Would standardize row {row['id']}: {row['age_group']} -> {standardized}")
-        
-        if not dry_run:
-            conn.commit()
-        
+            cur.execute(f"""
+                UPDATE {full_table}
+                SET age_group = {case_sql}
+                WHERE {where_sql}
+            """)
+            updated = cur.rowcount
+        conn.commit()
         if updated > 0:
             logger.info(f"  {full_table}: Standardized {updated} rows")
             total_updated += updated
-    
     return total_updated
 
 
@@ -581,6 +743,9 @@ def main():
         else:
             logger.info("\nSkipping DOB backfill (--skip-dob-backfill)")
         
+        # Fix invalid age_at_collection (set NULL where < 0 or > 120)
+        fix_invalid_age_at_collection(conn, dry_run=args.dry_run)
+        
         # Step 2: Calculate age_at_collection for all fact tables
         if not args.skip_age_calculation:
             # stash batch size on the function so the inner loop can access it without changing signature everywhere
@@ -609,7 +774,10 @@ def main():
         else:
             logger.info("\nSkipping age_at_collection calculation (--skip-age-calculation)")
         
-        # Step 3: Update age and age_group in d_athletes
+        # Fill null age_group in fact tables from age_at_collection
+        fill_fact_age_group_from_age_at_collection(conn, dry_run=args.dry_run)
+        
+        # Step 3: Update d_athletes age (fill NULL from DOB) and age_group from latest fact row
         updated, skipped = update_d_athletes_age_and_age_group(conn, dry_run=args.dry_run)
         logger.info(f"\nAge/age_group in d_athletes: Updated {updated}, Skipped {skipped}")
         

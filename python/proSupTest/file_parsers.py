@@ -95,6 +95,7 @@ def parse_xml_file(xml_file_path: str, test_date: str) -> Dict:
         raise ValueError("Name field is required in XML file")
     
     dob = safe_get_text(".//DOB")
+    gender = safe_get_text(".//Gender")
     height = safe_get_text(".//Height")
     weight = safe_get_text(".//Weight")
     injury_history = safe_get_text(".//Injury_History")
@@ -117,6 +118,7 @@ def parse_xml_file(xml_file_path: str, test_date: str) -> Dict:
         'name': name,
         'test_date': test_date,
         'age': age,
+        'gender': gender,
         'height': height,
         'weight': weight,
         'injury_history': injury_history,
