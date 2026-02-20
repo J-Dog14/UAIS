@@ -140,7 +140,6 @@ tryCatch({
   duration <- difftime(end_time, start_time, units = "secs")
   cat("\nERROR during processing (after", round(duration, 2), "seconds):\n")
   cat(conditionMessage(e), "\n")
-  cat("(Look for the last [PITCH-DEBUG] number in the output above to see how far we got.)\n")
   traceback()
   stop("Processing failed")
 })

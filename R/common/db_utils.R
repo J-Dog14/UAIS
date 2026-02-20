@@ -84,23 +84,35 @@ update_athlete_flags <- function(conn, verbose = TRUE) {
           COUNT(*) FILTER (WHERE has_readiness_screen_data) as with_readiness,
           COUNT(*) FILTER (WHERE has_mobility_data) as with_mobility,
           COUNT(*) FILTER (WHERE has_proteus_data) as with_proteus,
-          COUNT(*) FILTER (WHERE has_hitting_data) as with_hitting
+          COUNT(*) FILTER (WHERE has_hitting_data) as with_hitting,
+          COUNT(*) FILTER (WHERE has_hitting_trial_data) as with_hitting_trials
         FROM analytics.d_athletes
       ")
       
+      # Coerce to integer so integer64/bigint from DB don't print as tiny floats
+      n_total <- as.integer(stats$total_athletes)
+      n_pitching <- as.integer(stats$with_pitching)
+      n_athletic <- as.integer(stats$with_athletic_screen)
+      n_pro_sup <- as.integer(stats$with_pro_sup)
+      n_readiness <- as.integer(stats$with_readiness)
+      n_mobility <- as.integer(stats$with_mobility)
+      n_proteus <- as.integer(stats$with_proteus)
+      n_hitting <- as.integer(stats$with_hitting)
+      n_hitting_trials <- as.integer(stats$with_hitting_trials)
       cat("=", rep("=", 78), "\n", sep = "")
       cat("ATHLETE DATA FLAGS UPDATED\n")
       cat("=", rep("=", 78), "\n", sep = "")
-      cat("Total athletes:", stats$total_athletes, "\n")
+      cat("Total athletes:", n_total, "\n")
       cat("\n")
       cat("Athletes with data in each system:\n")
-      cat("  Pitching:", stats$with_pitching, "\n")
-      cat("  Athletic Screen:", stats$with_athletic_screen, "\n")
-      cat("  Pro-Sup:", stats$with_pro_sup, "\n")
-      cat("  Readiness Screen:", stats$with_readiness, "\n")
-      cat("  Mobility:", stats$with_mobility, "\n")
-      cat("  Proteus:", stats$with_proteus, "\n")
-      cat("  Hitting:", stats$with_hitting, "\n")
+      cat("  Pitching:", n_pitching, "\n")
+      cat("  Athletic Screen:", n_athletic, "\n")
+      cat("  Pro-Sup:", n_pro_sup, "\n")
+      cat("  Readiness Screen:", n_readiness, "\n")
+      cat("  Mobility:", n_mobility, "\n")
+      cat("  Proteus:", n_proteus, "\n")
+      cat("  Hitting:", n_hitting, "\n")
+      cat("  Hitting trials:", n_hitting_trials, "\n")
       cat("=", rep("=", 78), "\n", sep = "")
     }
     

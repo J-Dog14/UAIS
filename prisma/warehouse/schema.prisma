@@ -48,6 +48,8 @@ model DAthletes {
   curveballTestSessionCount   Int                    @default(0) @map("curveball_test_session_count")
   hasPitchingTrialData        Boolean                @default(false) @map("has_pitching_trial_data")
   pitchingTrialCount         Int                    @default(0) @map("pitching_trial_count")
+  hasHittingTrialData        Boolean                @default(false) @map("has_hitting_trial_data")
+  hittingTrialCount          Int                    @default(0) @map("hitting_trial_count")
   sourceMappings              DSourceAthleteMap[]
   armAction                   FArmAction[]
   athleticScreen              FAthleticScreen[]
@@ -685,6 +687,7 @@ enum Handedness {
 model FPitchingTrials {
   id                Int         @id @default(autoincrement())
   athleteUuid       String      @map("athlete_uuid") @db.VarChar(36)
+  name              String?     @db.VarChar(255)
   sessionDate       DateTime    @map("session_date") @db.Date
   sourceSystem      String      @default("pitching") @map("source_system") @db.VarChar(50)
   sourceAthleteId   String?     @map("source_athlete_id") @db.VarChar(100)

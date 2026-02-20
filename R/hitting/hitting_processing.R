@@ -666,7 +666,7 @@ process_all_files <- function(data_root = NULL) {
     }
   }
   
-  log_progress("Scanning for XML files in:", root_dir)
+  log_progress("Processing:", root_dir)
   
   # Find all session.xml and session_data.xml files (including .gz)
   log_progress("Searching for session.xml files...")
@@ -789,33 +789,19 @@ process_all_files <- function(data_root = NULL) {
   }
   
   # Fetch athlete UUID mapping from app database
-  cat("\n*** STEP 1: FETCHING UUIDs FROM APP DATABASE ***\n")
-  log_progress("Fetching athlete UUIDs from app database...")
   uuid_map <- fetch_athlete_uuid_map()
-  cat("*** UUID MAP RESULT: Contains", length(uuid_map), "entries ***\n")
-  log_progress("UUID map contains", length(uuid_map), "entries")
   if (length(uuid_map) > 0) {
-    cat("*** FIRST 5 UUID MAPPINGS ***\n")
-    log_progress("First few UUID mappings:")
-    for (i in seq_len(min(5, length(uuid_map)))) {
-      cat("  '", names(uuid_map)[i], "' -> '", uuid_map[[i]], "'\n", sep = "")
-      log_progress("  ", names(uuid_map)[i], " -> ", uuid_map[[i]])
-    }
+    log_progress("UUID map:", length(uuid_map), "athletes (will match existing where possible).")
   } else {
-    cat("*** CRITICAL WARNING: UUID MAP IS EMPTY! ***\n")
-    cat("*** All athletes will get NEW UUIDs instead of matching existing ones ***\n")
-    log_progress("WARNING: UUID map is empty! Will generate new UUIDs for all athletes.")
+    log_progress("UUID map empty - new UUIDs will be assigned.")
   }
-  cat("\n")
   
   # Process session.xml files to get athlete info
   athlete_list <- list()
   owner_mapping <- list()  # Map owner names to athlete IDs
   
   total_session_files <- length(session_files)
-  log_progress("=", rep("=", 60), sep = "")
-  log_progress("PHASE 1: Processing", total_session_files, "session.xml files for athlete info")
-  log_progress("=", rep("=", 60), sep = "")
+  log_progress("Phase 1: Processing", total_session_files, "session.xml files for athlete info.")
   
   for (i in seq_along(session_files)) {
     sf <- session_files[i]
@@ -966,23 +952,16 @@ process_all_files <- function(data_root = NULL) {
   total_rows_extracted <- 0
   
   log_progress("")
-  log_progress("PHASE 2: Processing", total_data_files, "session_data.xml files for metric data")
-  log_progress("")
-  
-  # Force output immediately
-  cat("\n*** PHASE 2 STARTING ***\n")
-  cat("Total session_data.xml files:", total_data_files, "\n")
-  flush.console()
+  log_progress("Phase 2: Processing", total_data_files, "session_data.xml files for metric data.")
   
   for (i in seq_along(session_data_files)) {
     sdf <- session_data_files[i]
-    if (i <= 3 || i %% 10 == 0) {  # Log first 3 files and every 10th file
-      log_progress("[", i, "/", total_data_files, "] Processing:", basename(sdf))
-      cat("Processing file", i, "of", total_data_files, ":", basename(sdf), "\n")
+    if (i <= 3 || i %% 10 == 0) {
+      log_progress("[", i, "/", total_data_files, "] ", basename(sdf))
       flush.console()
     }
     doc <- tryCatch(read_xml_robust(sdf), error = function(e) {
-      if (i <= 3) {
+      if (FALSE) {
         log_progress("  [ERROR] Error reading file:", conditionMessage(e))
         cat("ERROR reading file:", conditionMessage(e), "\n")
         flush.console()
@@ -990,7 +969,7 @@ process_all_files <- function(data_root = NULL) {
       NULL
     })
     if (is.null(doc)) {
-      if (i <= 3) {
+      if (FALSE) {
         cat("  File", i, "failed to load, skipping\n")
         flush.console()
       }
@@ -1003,7 +982,7 @@ process_all_files <- function(data_root = NULL) {
       owners <- xml_find_all(root, "./owner")
       owner_names <- xml_attr(owners, "value")
       
-      if (i <= 3) {
+      if (FALSE) {
         log_progress("  Found", length(owner_names), "owners:", paste(owner_names, collapse = ", "))
         cat("  Found", length(owner_names), "owners in file", i, "\n")
         flush.console()
@@ -1026,18 +1005,10 @@ process_all_files <- function(data_root = NULL) {
         # First check if we already mapped this directory (from a previous owner in same file)
         if (dir_path_normalized %in% names(owner_mapping)) {
           matched_uid <- owner_mapping[[dir_path_normalized]]
-          if (i <= 3) {
-            cat("    [MATCH-CACHED] Owner", owner_name, "-> Directory already mapped to UID:", matched_uid, "\n")
-            flush.console()
-          }
         } else {
           # Find session.xml in same directory (most reliable)
           session_xml <- file.path(dir_path, "session.xml")
           if (file.exists(session_xml)) {
-            if (i <= 3) {
-              cat("    [DEBUG] Found session.xml in same directory:", session_xml, "\n")
-              flush.console()
-            }
             # Look up this session.xml in athlete_list (from Phase 1) to get the correct UUID
             session_xml_normalized <- normalizePath(session_xml, winslash = "/", mustWork = FALSE)
             found_athlete <- NULL
@@ -1055,26 +1026,13 @@ process_all_files <- function(data_root = NULL) {
               matched_uid <- found_athlete$uid[1]
               # Cache this mapping for future owners in same directory
               owner_mapping[[dir_path_normalized]] <- matched_uid
-              if (i <= 3) {
-                cat("    [MATCH-SESSION] Owner", owner_name, "matched via session.xml in same directory\n")
-                cat("      Athlete:", found_athlete$name[1], "| UID:", matched_uid, "\n")
-                flush.console()
-              }
             } else {
-              if (i <= 3) {
-                cat("    [WARNING] session.xml found but not in athlete_list:", session_xml, "\n")
-                flush.console()
-              }
             }
           } else {
             # Try parent directory
             parent_dir <- dirname(dir_path)
             session_xml <- file.path(parent_dir, "session.xml")
             if (file.exists(session_xml)) {
-              if (i <= 3) {
-                cat("    [DEBUG] Found session.xml in parent directory:", session_xml, "\n")
-                flush.console()
-              }
               # Look up this session.xml in athlete_list
               session_xml_normalized <- normalizePath(session_xml, winslash = "/", mustWork = FALSE)
               found_athlete <- NULL
@@ -1091,19 +1049,19 @@ process_all_files <- function(data_root = NULL) {
               if (!is.null(found_athlete) && nrow(found_athlete) > 0 && "uid" %in% names(found_athlete) && !is.na(found_athlete$uid[1])) {
                 matched_uid <- found_athlete$uid[1]
                 owner_mapping[[dir_path_normalized]] <- matched_uid
-                if (i <= 3) {
+                if (FALSE) {
                   cat("    [MATCH-SESSION] Owner", owner_name, "matched via session.xml in parent directory\n")
                   cat("      Athlete:", found_athlete$name[1], "| UID:", matched_uid, "\n")
                   flush.console()
                 }
               } else {
-                if (i <= 3) {
+                if (FALSE) {
                   cat("    [WARNING] session.xml in parent found but not in athlete_list:", session_xml, "\n")
                   flush.console()
                 }
               }
             } else {
-              if (i <= 3) {
+              if (FALSE) {
                 cat("    [WARNING] No session.xml found in", dir_path, "or parent\n")
                 flush.console()
               }
@@ -1118,13 +1076,13 @@ process_all_files <- function(data_root = NULL) {
         
         if (owner_base %in% names(owner_mapping)) {
           matched_uid <- owner_mapping[[owner_base]]
-            if (i <= 3) {
+            if (FALSE) {
               cat("    [MATCH-NAME] Owner", owner_name, "matched via direct name match\n")
               flush.console()
             }
         } else if (owner_no_ext %in% names(owner_mapping)) {
           matched_uid <- owner_mapping[[owner_no_ext]]
-            if (i <= 3) {
+            if (FALSE) {
               cat("    [MATCH-NAME] Owner", owner_name, "matched via base name match\n")
               flush.console()
             }
@@ -1175,7 +1133,7 @@ process_all_files <- function(data_root = NULL) {
           # Only use match if score is high enough (at least 2 common directory parts to avoid false matches)
           if (!is.null(best_match) && best_match_score >= 2 && "uid" %in% names(best_match) && !is.na(best_match$uid[1])) {
             matched_uid <- best_match$uid[1]
-            if (i <= 3) {
+            if (FALSE) {
               cat("    [MATCH] Owner", owner_name, "matched via directory similarity (score:", best_match_score, ")\n")
               cat("      Athlete:", best_match$name[1], "| UID:", matched_uid, "\n")
               flush.console()
@@ -1199,7 +1157,7 @@ process_all_files <- function(data_root = NULL) {
         is_swing <- grepl("swing", owner_name_lower)
         
         if (is_static) {
-          if (i <= 3) {
+          if (FALSE) {
             cat("    [SKIP] Static trial owner:", owner_name, "\n")
             flush.console()
           }
@@ -1207,7 +1165,7 @@ process_all_files <- function(data_root = NULL) {
         }
         
         if (!is_swing) {
-          if (i <= 3) {
+          if (FALSE) {
             cat("    [SKIP] Non-Swing trial owner:", owner_name, "\n")
             flush.console()
           }
@@ -1217,27 +1175,27 @@ process_all_files <- function(data_root = NULL) {
         total_owners_matched <- total_owners_matched + 1
         
         # Extract ALL metric data for this owner
-        if (i <= 3) {
+        if (FALSE) {
           log_progress("    [MATCHED] Owner:", owner_name, "-> UID:", matched_uid)
           cat("    [PROCESSING] Swing owner:", owner_name, "\n")
           flush.console()
         }
         
         # Call extract_metric_data and get detailed feedback
-        if (i <= 3) {
+        if (FALSE) {
           cat("    Calling extract_metric_data for owner:", owner_name, "\n")
           flush.console()
         }
         metric_data <- extract_metric_data(doc, owner_name)
         
-        if (i <= 3) {
+        if (FALSE) {
           cat("    extract_metric_data returned", nrow(metric_data), "rows\n")
           flush.console()
         }
         
         if (nrow(metric_data) > 0) {
           total_rows_extracted <- total_rows_extracted + nrow(metric_data)
-          if (i <= 3) {
+          if (FALSE) {
             log_progress("      Extracted", nrow(metric_data), "rows of METRIC data")
             cat("    [SUCCESS] Extracted", nrow(metric_data), "rows for owner", owner_name, "\n")
             flush.console()
@@ -1253,7 +1211,7 @@ process_all_files <- function(data_root = NULL) {
           metric_data$source_path <- sdf
           metric_data_list[[length(metric_data_list) + 1]] <- metric_data
         } else {
-          if (i <= 3) {
+          if (FALSE) {
             log_progress("      [WARNING] No METRIC data extracted for", owner_name)
             cat("    [WARNING] No data extracted for owner:", owner_name, "\n")
             flush.console()
@@ -1271,21 +1229,7 @@ process_all_files <- function(data_root = NULL) {
   
   # Summary of Phase 2
   log_progress("")
-  log_progress("PHASE 2 SUMMARY:")
-  log_progress("  Total owners processed:", total_owners_processed)
-  log_progress("  Owners matched:", total_owners_matched)
-  log_progress("  Owners skipped:", total_owners_skipped)
-  log_progress("  Total metric rows extracted:", total_rows_extracted)
-  log_progress("  Metric data lists created:", length(metric_data_list))
-  
-  # Force output with cat
-  cat("\n*** PHASE 2 SUMMARY ***\n")
-  cat("Total owners processed:", total_owners_processed, "\n")
-  cat("Owners matched:", total_owners_matched, "\n")
-  cat("Owners skipped:", total_owners_skipped, "\n")
-  cat("Total metric rows extracted:", total_rows_extracted, "\n")
-  cat("Metric data lists created:", length(metric_data_list), "\n")
-  flush.console()
+  log_progress("Phase 2 summary: owners matched:", total_owners_matched, "| metric rows:", total_rows_extracted, "| trial lists:", length(metric_data_list))
   
   # Combine and write to database
   # For time series data, we need to ensure all rows have the same columns
@@ -1337,20 +1281,11 @@ process_all_files <- function(data_root = NULL) {
       padded_list[[length(padded_list) + 1]] <- df
     }
     
-    log_progress("  Binding all dataframes together...")
-    log_progress("  Number of dataframes to bind:", length(padded_list))
-    if (length(padded_list) > 0) {
-      log_progress("  First dataframe dimensions:", nrow(padded_list[[1]]), "rows,", ncol(padded_list[[1]]), "columns")
-      log_progress("  First dataframe columns:", paste(names(padded_list[[1]]), collapse = ", "))
-    }
-    cat("  [PROGRESS] Binding", length(padded_list), "dataframes (this may take a while)...\n")
-    flush.console()
     metric_df <- bind_rows(padded_list)
-    log_progress("  metric_df after binding:", nrow(metric_df), "rows,", ncol(metric_df), "columns")
-    cat("  [SUCCESS] Binding complete!\n")
-    flush.console()
+    log_progress("  Bound", length(padded_list), "dataframes ->", nrow(metric_df), "rows")
     
     if (use_warehouse) {
+      n_hitting_trials_written <- 0L
       # Write to PostgreSQL warehouse f_kinematics_hitting table
       log_progress("  Writing metrics to warehouse f_kinematics_hitting table...")
       if (nrow(metric_df) == 0) {
@@ -1363,10 +1298,6 @@ process_all_files <- function(data_root = NULL) {
       }
       
       # Extract session_date from source_path (try to get date from directory structure or creation_date)
-      log_progress("  Setting session_date for", nrow(metric_df), "rows...")
-      cat("  [PROGRESS] Creating session_date mapping (optimized)...\n")
-      flush.console()
-      
       # OPTIMIZED: Create a mapping from source_path directory to creation_date first
       # This avoids the nested loop which is O(n*m) - very slow!
       path_to_date_map <- list()
@@ -1401,9 +1332,6 @@ process_all_files <- function(data_root = NULL) {
           metric_df$session_date[metric_df$source_path == path] <- path_to_date_map[[path_dir]]
         }
       }
-      
-      cat("  [SUCCESS] Session dates assigned!\n")
-      flush.console()
       
       # ---------- Build uuid -> age/height/weight for f_hitting_trials ----------
       uuid_to_age_df <- tibble(
@@ -1491,6 +1419,7 @@ process_all_files <- function(data_root = NULL) {
               CREATE TABLE IF NOT EXISTS public.f_hitting_trials (
                 id SERIAL PRIMARY KEY,
                 athlete_uuid VARCHAR(36) NOT NULL,
+                name VARCHAR(255),
                 session_date DATE NOT NULL,
                 source_system VARCHAR(50) NOT NULL DEFAULT 'hitting',
                 source_athlete_id VARCHAR(100),
@@ -1540,6 +1469,29 @@ process_all_files <- function(data_root = NULL) {
               DBI::dbExecute(con, "ALTER TABLE public.f_hitting_trials ADD COLUMN weight NUMERIC")
               log_progress("  Added weight to f_hitting_trials")
             }
+            if (!"name" %in% trials_cols) {
+              DBI::dbExecute(con, "ALTER TABLE public.f_hitting_trials ADD COLUMN name VARCHAR(255)")
+              log_progress("  Added name to f_hitting_trials")
+            }
+          }
+          # Lookup athlete names from d_athletes for name column
+          unique_uuids_hitting <- unique(as.character(trials_df$athlete_uuid))
+          names_df_hitting <- tryCatch({
+            if (length(unique_uuids_hitting) > 0) {
+              DBI::dbGetQuery(con, paste0("
+                SELECT athlete_uuid, name FROM analytics.d_athletes WHERE athlete_uuid IN ('", paste(unique_uuids_hitting, collapse = "','"), "')
+              "))
+            } else {
+              data.frame(athlete_uuid = character(0), name = character(0))
+            }
+          }, error = function(e) {
+            data.frame(athlete_uuid = character(0), name = character(0))
+          })
+          if (nrow(names_df_hitting) > 0 && "name" %in% names(names_df_hitting)) {
+            trials_df <- trials_df %>% left_join(names_df_hitting, by = "athlete_uuid")
+          }
+          if (!"name" %in% names(trials_df)) {
+            trials_df$name <- NA_character_
           }
           # Insert/upsert trials
           trials_df$source_system <- "hitting"
@@ -1547,10 +1499,11 @@ process_all_files <- function(data_root = NULL) {
             row <- trials_df[r, ]
             DBI::dbExecute(con, "
               INSERT INTO public.f_hitting_trials
-                (athlete_uuid, session_date, source_system, source_athlete_id, owner_filename, trial_index,
+                (athlete_uuid, name, session_date, source_system, source_athlete_id, owner_filename, trial_index,
                  age_at_collection, age_group, height, weight, metrics, session_xml_path, session_data_xml_path)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
               ON CONFLICT (athlete_uuid, session_date, trial_index) DO UPDATE SET
+                name = COALESCE(EXCLUDED.name, f_hitting_trials.name),
                 owner_filename = EXCLUDED.owner_filename,
                 source_athlete_id = COALESCE(EXCLUDED.source_athlete_id, f_hitting_trials.source_athlete_id),
                 age_at_collection = EXCLUDED.age_at_collection,
@@ -1562,12 +1515,13 @@ process_all_files <- function(data_root = NULL) {
                 session_data_xml_path = EXCLUDED.session_data_xml_path,
                 created_at = NOW()
             ", params = list(
-              row$athlete_uuid, row$session_date, row$source_system, row$source_athlete_id,
+              row$athlete_uuid, if (is.na(row$name) || row$name == "") NULL else as.character(row$name), row$session_date, row$source_system, row$source_athlete_id,
               row$owner_filename, row$trial_index,
               row$age_at_collection, row$age_group, row$height, row$weight, row$metrics_json,
               row$session_xml_path, row$session_data_xml_path
             ))
           }
+          n_hitting_trials_written <- nrow(trials_df)
           log_progress("  [SUCCESS] Wrote", nrow(trials_df), "rows to f_hitting_trials")
         }
       } else {
@@ -1612,25 +1566,17 @@ process_all_files <- function(data_root = NULL) {
           created_at
         )
       
-      log_progress("  Pivot complete! warehouse_df has", nrow(warehouse_df), "rows")
-      cat("  [SUCCESS] Pivot complete! Final row count:", nrow(warehouse_df), "\n")
-      flush.console()
+      log_progress("  Pivoted to long format:", nrow(warehouse_df), "rows.")
       
       # Write to warehouse
-      log_progress("  ===== STARTING DATABASE WRITE =====")
-      log_progress("  Writing", nrow(warehouse_df), "rows to f_kinematics_hitting...")
-      cat("  [INFO] Starting database write operation...\n")
-      flush.console()
       
       # Check if table exists, create if not
-      log_progress("  Checking if table exists...")
       table_exists <- tryCatch({
         DBI::dbExistsTable(con, Id(schema = "public", table = "f_kinematics_hitting"))
       }, error = function(e) {
         log_progress("  [ERROR] Failed to check if table exists:", conditionMessage(e))
         stop("Cannot check table existence: ", conditionMessage(e))
       })
-      log_progress("  Table exists:", table_exists)
       
       if (!table_exists) {
         log_progress("  Creating f_kinematics_hitting table...")
@@ -1717,35 +1663,13 @@ process_all_files <- function(data_root = NULL) {
       
       if (nrow(warehouse_df) > 0) {
         tryCatch({
-          # Check if we should clear existing data first
-          # Option: Add a flag to control this behavior, or check for duplicates
           existing_count <- DBI::dbGetQuery(con, "SELECT COUNT(*) as count FROM f_kinematics_hitting")$count
-          log_progress("  Existing rows in table:", existing_count)
-          
-          if (existing_count > 0) {
-            if (TRUNCATE_BEFORE_INSERT) {
-              log_progress("  Truncating existing data before inserting new data...")
-              DBI::dbExecute(con, "TRUNCATE TABLE f_kinematics_hitting")
-              log_progress("  [SUCCESS] Table truncated")
-            } else {
-              log_progress("  [WARNING] Table already contains", existing_count, "rows!")
-              log_progress("  This will APPEND new data, potentially creating duplicates")
-              log_progress("  To avoid duplicates, set TRUNCATE_BEFORE_INSERT <- TRUE")
-              
-              # Check for potential duplicates based on unique combination
-              # We'll use a simple check: if the new data size matches existing, warn
-              if (nrow(warehouse_df) == existing_count) {
-                log_progress("  [WARNING] New data count matches existing count - possible duplicate run!")
-              }
-            }
+          if (existing_count > 0 && TRUNCATE_BEFORE_INSERT) {
+            DBI::dbExecute(con, "TRUNCATE TABLE f_kinematics_hitting")
+            log_progress("  Table truncated before insert.")
           }
           
-          log_progress("  Writing", nrow(warehouse_df), "rows to database...")
-          
           # Use INSERT with ON CONFLICT to prevent duplicates
-          # First, let's try to identify potential duplicates before inserting
-          # Check for existing data with same athlete_uuid, session_date, metric_name, and frame
-          log_progress("  Checking for potential duplicates...")
           
           # Get unique combinations from new data
           new_combos <- warehouse_df %>%
@@ -1769,9 +1693,6 @@ process_all_files <- function(data_root = NULL) {
             n_duplicates <- sum(duplicates)
             
             if (n_duplicates > 0) {
-              log_progress("  [WARNING] Found", n_duplicates, "potential duplicate rows!")
-              log_progress("  Filtering out duplicates before insert...")
-              
               # Filter out duplicates from warehouse_df
               warehouse_df$check_key <- paste(warehouse_df$athlete_uuid, 
                                                warehouse_df$session_date, 
@@ -1779,20 +1700,10 @@ process_all_files <- function(data_root = NULL) {
                                                warehouse_df$frame, sep = "|")
               warehouse_df <- warehouse_df[!warehouse_df$check_key %in% existing_combos$check_key, ]
               warehouse_df$check_key <- NULL  # Remove temporary column
-              
-              log_progress("  After filtering:", nrow(warehouse_df), "unique rows to insert")
-            } else {
-              log_progress("  No duplicates found - all rows are new")
             }
-          } else {
-            log_progress("  No existing data - all rows are new")
           }
           
           if (nrow(warehouse_df) > 0) {
-            # Prisma creates a unique constraint on (athlete_uuid, session_date, metric_name, frame)
-            # Use dbWriteTable but wrap in tryCatch to catch constraint violations
-            # If it fails, we'll use a workaround
-            log_progress("  Inserting", nrow(warehouse_df), "rows to f_kinematics_hitting...")
             
             # Ensure data types match Prisma schema
             warehouse_df$athlete_uuid <- as.character(warehouse_df$athlete_uuid)
@@ -1807,15 +1718,10 @@ process_all_files <- function(data_root = NULL) {
             warehouse_df$created_at <- as.POSIXct(warehouse_df$created_at)
             
             # Use temp table + INSERT ... ON CONFLICT DO NOTHING to handle duplicates gracefully
-            log_progress("  Inserting data with ON CONFLICT DO NOTHING (skips duplicates)...")
-            cat("  [INFO] Writing data to database (this may take a moment)...\n")
-            flush.console()
-            
             rows_inserted <- tryCatch({
               # Create a temporary table with the same structure
               temp_table_name <- "temp_hitting_insert"
               
-              log_progress("  Creating temporary table for batch insert...")
               DBI::dbExecute(con, paste0("
                 CREATE TEMP TABLE ", temp_table_name, " (
                   athlete_uuid VARCHAR(36) NOT NULL,
@@ -1829,12 +1735,7 @@ process_all_files <- function(data_root = NULL) {
                 )
               "))
               
-              # Write data to temp table (fast)
-              log_progress("  Writing", nrow(warehouse_df), "rows to temp table...")
               DBI::dbWriteTable(con, temp_table_name, warehouse_df, append = TRUE, row.names = FALSE)
-              
-              # Insert from temp table to actual table with ON CONFLICT DO NOTHING
-              log_progress("  Inserting from temp table to f_kinematics_hitting (skipping duplicates)...")
               result <- DBI::dbExecute(con, paste0("
                 INSERT INTO public.f_kinematics_hitting 
                 (athlete_uuid, session_date, source_system, source_athlete_id, metric_name, frame, value, created_at)
@@ -1845,10 +1746,6 @@ process_all_files <- function(data_root = NULL) {
               
               # Drop temp table
               DBI::dbExecute(con, paste0("DROP TABLE IF EXISTS ", temp_table_name))
-              
-              log_progress("  [SUCCESS] Inserted", result, "new rows (skipped", nrow(warehouse_df) - result, "duplicates)")
-              cat("  [SUCCESS] Insert complete!\n")
-              flush.console()
               
               result
             }, error = function(e) {
@@ -1887,66 +1784,37 @@ process_all_files <- function(data_root = NULL) {
               stop("Insert failed: ", error_msg)
             })
             
-            if (rows_inserted > 0) {
-              log_progress("[SUCCESS] Inserted", rows_inserted, "new rows to f_kinematics_hitting table")
-            } else {
-              log_progress("  [INFO] No new rows inserted (all were duplicates)")
+          } else {
+          }
+          
+          # Summary: athlete names, write counts, flags
+          processed_uuids_summary <- unique(unlist(lapply(athlete_list, function(a) {
+            if (nrow(a) > 0 && "uid" %in% names(a) && !is.na(a$uid[1])) a$uid[1] else NULL
+          })))
+          processed_uuids_summary <- processed_uuids_summary[!sapply(processed_uuids_summary, is.null)]
+          athlete_names_line <- ""
+          if (length(processed_uuids_summary) > 0) {
+            names_res <- tryCatch({
+              DBI::dbGetQuery(con, paste0("SELECT athlete_uuid, name FROM analytics.d_athletes WHERE athlete_uuid IN ('", paste(processed_uuids_summary, collapse = "','"), "')"))
+            }, error = function(e) NULL)
+            if (!is.null(names_res) && nrow(names_res) > 0) {
+              athlete_names_line <- paste(names_res$name, collapse = ", ")
             }
-          } else {
-            log_progress("  [SKIPPED] No new rows to insert (all were duplicates)")
           }
-          
-          # Verify write by counting rows
-          row_count <- DBI::dbGetQuery(con, "SELECT COUNT(*) as count FROM f_kinematics_hitting")$count
-          log_progress("  Total rows in table now:", row_count)
-          
-          # Check for duplicates by athlete and session
-          duplicate_check <- DBI::dbGetQuery(con, "
-            SELECT athlete_uuid, session_date, COUNT(*) as cnt
-            FROM f_kinematics_hitting
-            GROUP BY athlete_uuid, session_date
-            HAVING COUNT(*) > 50000
-            ORDER BY cnt DESC
-            LIMIT 5
-          ")
-          if (nrow(duplicate_check) > 0) {
-            log_progress("  [WARNING] Found athletes with unusually high row counts (possible duplicates):")
-            print(duplicate_check)
-          }
-          
-          # Verify with a sample of the most recently inserted rows (not the first 5 in the table)
-          sample_data <- DBI::dbGetQuery(con, "
-            SELECT * FROM f_kinematics_hitting ORDER BY id DESC LIMIT 5
-          ")
-          if (nrow(sample_data) > 0) {
-            log_progress("  Most recently inserted rows (from this run):")
-            print(sample_data)
-          } else {
-            log_progress("  [WARNING] Table exists but query returned 0 rows!")
-          }
-          
-          # Update athlete data flags and session counts
-          log_progress("")
-          log_progress("Updating athlete data flags and session counts...")
+          cat("\n")
+          if (nzchar(athlete_names_line)) cat("Athlete(s):", athlete_names_line, "\n")
+          cat("Written to f_hitting_trials:", n_hitting_trials_written, "rows; f_kinematics_hitting:", rows_inserted, "rows\n")
           tryCatch({
-            update_result <- update_athlete_flags(con, verbose = TRUE)
+            update_result <- update_athlete_flags(con, verbose = FALSE)
             if (update_result$success) {
-              log_progress("  [SUCCESS] Athlete flags updated successfully")
-            } else {
-              log_progress("  [WARNING] Failed to update athlete flags:", update_result$message)
+              cat("Athlete flags updated.\n")
             }
           }, error = function(e) {
             log_progress("  [WARNING] Error updating athlete flags:", conditionMessage(e))
-            log_progress("  You can manually update flags by running: SELECT update_athlete_data_flags();")
           })
           
           # Check for duplicate athletes and prompt to merge
-          log_progress("")
-          log_progress("=", rep("=", 60), sep = "")
-          log_progress("CHECKING FOR DUPLICATE ATHLETES")
-          log_progress("=", rep("=", 60), sep = "")
           tryCatch({
-            # Get list of processed athlete UUIDs
             processed_uuids <- sapply(athlete_list, function(a) {
               if (nrow(a) > 0 && "uid" %in% names(a) && !is.na(a$uid[1])) {
                 return(a$uid[1])
@@ -1954,15 +1822,9 @@ process_all_files <- function(data_root = NULL) {
               return(NULL)
             })
             processed_uuids <- unique(unlist(processed_uuids))
-            processed_uuids <- processed_uuids[!is.null(processed_uuids)]
-            
-            log_progress("  Checking", length(processed_uuids), "processed athlete UUID(s) for duplicates...")
-            if (length(processed_uuids) > 0) {
-              log_progress("  Athlete UUIDs to check:", paste(processed_uuids, collapse = ", "))
-            }
+            processed_uuids <- processed_uuids[!sapply(processed_uuids, is.null)]
             
             if (length(processed_uuids) > 0 && exists("check_and_merge_duplicates")) {
-              log_progress("  Calling check_and_merge_duplicates()...")
               duplicate_result <- check_and_merge_duplicates(
                 athlete_uuids = processed_uuids,
                 min_similarity = 0.80
@@ -2115,6 +1977,7 @@ process_all_files <- function(data_root = NULL) {
             CREATE TABLE IF NOT EXISTS public.f_hitting_trials (
               id SERIAL PRIMARY KEY,
               athlete_uuid VARCHAR(36) NOT NULL,
+              name VARCHAR(255),
               session_date DATE NOT NULL,
               source_system VARCHAR(50) NOT NULL DEFAULT 'hitting',
               source_athlete_id VARCHAR(100),
@@ -2148,6 +2011,21 @@ process_all_files <- function(data_root = NULL) {
           FROM public.f_hitting_trials
           GROUP BY athlete_uuid, session_date
         ")
+        # Lookup names for JSON trial rows
+        json_uuids <- unique(as.character(json_df$athlete_uuid))
+        json_names_df <- tryCatch({
+          if (length(json_uuids) > 0) {
+            DBI::dbGetQuery(con, paste0("
+              SELECT athlete_uuid, name FROM analytics.d_athletes WHERE athlete_uuid IN ('", paste(json_uuids, collapse = "','"), "')
+            "))
+          } else {
+            data.frame(athlete_uuid = character(0), name = character(0))
+          }
+        }, error = function(e) data.frame(athlete_uuid = character(0), name = character(0)))
+        if (nrow(json_names_df) > 0 && "name" %in% names(json_names_df)) {
+          json_df <- json_df %>% left_join(json_names_df, by = "athlete_uuid")
+        }
+        if (!"name" %in% names(json_df)) json_df$name <- NA_character_
         json_df$source_system <- "hitting"
         json_df$trial_index <- NA_integer_
         for (i in seq_len(nrow(json_df))) {
@@ -2164,10 +2042,11 @@ process_all_files <- function(data_root = NULL) {
           r <- json_df[i, ]
           DBI::dbExecute(con, "
             INSERT INTO public.f_hitting_trials
-              (athlete_uuid, session_date, source_system, source_athlete_id, owner_filename, trial_index,
+              (athlete_uuid, name, session_date, source_system, source_athlete_id, owner_filename, trial_index,
                age_at_collection, age_group, height, weight, metrics, session_xml_path, session_data_xml_path)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
             ON CONFLICT (athlete_uuid, session_date, trial_index) DO UPDATE SET
+              name = COALESCE(EXCLUDED.name, f_hitting_trials.name),
               owner_filename = EXCLUDED.owner_filename,
               source_athlete_id = COALESCE(EXCLUDED.source_athlete_id, f_hitting_trials.source_athlete_id),
               age_at_collection = EXCLUDED.age_at_collection,
@@ -2179,7 +2058,7 @@ process_all_files <- function(data_root = NULL) {
               session_data_xml_path = EXCLUDED.session_data_xml_path,
               created_at = NOW()
           ", params = list(
-            r$athlete_uuid, r$session_date, r$source_system, r$source_athlete_id,
+            r$athlete_uuid, if (is.na(r$name) || r$name == "") NULL else as.character(r$name), r$session_date, r$source_system, r$source_athlete_id,
             r$owner_filename, r$trial_index,
             r$age_at_collection, r$age_group, r$height, r$weight, r$metrics_json,
             r$session_xml_path, r$session_data_xml_path
